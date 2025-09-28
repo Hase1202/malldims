@@ -33,7 +33,7 @@ const SORTABLE_COLUMNS: SortableColumn[] = [
 ];
 
 interface TransactionTableProps {
-    transactionType?: 'completed' | 'pending';
+    transactionType?: 'completed' | 'pending' | 'all';
     stockMovementType?: 'in' | 'out' | null;
     searchQuery?: string;
     filters?: Record<string, string>;
@@ -45,7 +45,7 @@ const getBrandOrCustomer = (tx: Transaction) =>
     (tx.brand_name || tx.customer_name || '').toLowerCase();
 
 const TransactionTable: React.FC<TransactionTableProps> = ({ 
-    transactionType = 'completed',
+    transactionType = 'all',
     stockMovementType,
     searchQuery = '', 
     filters = {},
@@ -93,7 +93,10 @@ const TransactionTable: React.FC<TransactionTableProps> = ({
                     page: String(pageParam)
                 });
                 
-                params.append('status', transactionType === 'completed' ? 'Completed' : 'Pending');
+                // Only add status filter if not showing all transactions
+                if (transactionType !== 'all') {
+                    params.append('status', transactionType === 'completed' ? 'Completed' : 'Pending');
+                }
                 
                 if (sort.field) {
                     let sortField = sort.field;
@@ -122,6 +125,19 @@ const TransactionTable: React.FC<TransactionTableProps> = ({
                     params.append('type', 'Dispatch goods,Reserve goods');
                 }
                 
+                // Handle new transactionType filter
+                if (filters.transactionType) {
+                    const typeMap: Record<string, string> = {
+                        'Incoming': 'INCOMING',
+                        'Outgoing': 'OUTGOING', 
+                        'Adjustment': 'ADJUSTMENT'
+                    };
+                    const mappedType = typeMap[filters.transactionType];
+                    if (mappedType) {
+                        params.append('transactionType', mappedType);
+                    }
+                }
+                
                 if (filters.type) {
                     // Handle special case for Manual correction filters
                     if (filters.type === 'Manual correction (+)') {
@@ -135,6 +151,25 @@ const TransactionTable: React.FC<TransactionTableProps> = ({
                     }
                 }
                 
+                // Add date range filters
+                if (filters.startDate) {
+                    params.append('startDate', filters.startDate);
+                }
+                if (filters.endDate) {
+                    params.append('endDate', filters.endDate);
+                }
+                
+                // Add other status filters
+                if (filters.releaseStatus) {
+                    params.append('releaseStatus', filters.releaseStatus);
+                }
+                if (filters.paymentStatus) {
+                    params.append('paymentStatus', filters.paymentStatus);
+                }
+                if (filters.orInvoiceStatus) {
+                    params.append('orInvoiceStatus', filters.orInvoiceStatus);
+                }
+                
                 if (isSales(user)) {
                     params.set('mine', 'true');
                 }
@@ -142,6 +177,11 @@ const TransactionTable: React.FC<TransactionTableProps> = ({
                 console.log('API params:', Object.fromEntries(params.entries()));
                 
                 const response = await transactionsApi.getAll(params);
+                
+                // Debug: log the full response
+                console.log('API Response:', response);
+                console.log('Response status:', response.status);
+                console.log('Response data:', response.data);
                 
                 if (response.status === 'error' || !response.data) {
                     throw new Error(response.message || 'Failed to fetch transactions');
@@ -289,23 +329,31 @@ const TransactionTable: React.FC<TransactionTableProps> = ({
 
     const getTypeColor = (type: string): string => {
         switch (type.toLowerCase()) {
+            case 'outgoing':
             case 'dispatch goods':
-                return 'bg-[#FDF2FA] text-[#C11574] px-2.5 py-1 rounded-full text-xs';
+                return 'bg-[#F0FDF4] text-[#027A48] px-2.5 py-1 rounded-full text-xs';
+            case 'incoming':
             case 'receive goods':
             case 'receive products':
                 return 'bg-[#F4F3FF] text-[#5925DC] px-2.5 py-1 rounded-full text-xs';
+            case 'adjustment':
+            case 'manual correction':
+            case 'manual adjustment':
+                return 'bg-[#FEF3F2] text-[#B42318] px-2.5 py-1 rounded-full text-xs';
             case 'return goods':
                 return 'bg-[#F0F9FF] text-[#026AA2] px-2.5 py-1 rounded-full text-xs';
             case 'reserve goods':
-                return 'bg-[#FEF3F2] text-[#B42318] px-2.5 py-1 rounded-full text-xs';
-            case 'manual correction':
-                return 'bg-[#F0FDF4] text-[#027A48] px-2.5 py-1 rounded-full text-xs';
+                return 'bg-[#FDF2FA] text-[#C11574] px-2.5 py-1 rounded-full text-xs';
             default:
                 return 'text-gray-900';
         }
     };
 
-    const getStatusBadge = (status: string, priorityStatus?: string, dueDate?: string): string => {
+    const getStatusBadge = (status: string | undefined, priorityStatus?: string, dueDate?: string): string => {
+        if (!status) {
+            return 'bg-gray-50 text-gray-600 px-2.5 py-1 rounded-full text-xs';
+        }
+        
         if (status.toLowerCase() === 'pending') {
             // Check if overdue
             if (dueDate) {
@@ -340,7 +388,11 @@ const TransactionTable: React.FC<TransactionTableProps> = ({
         }
     };
 
-    const getStatusText = (status: string, priorityStatus?: string, dueDate?: string): string => {
+    const getStatusText = (status: string | undefined, priorityStatus?: string, dueDate?: string): string => {
+        if (!status) {
+            return 'Unknown';
+        }
+        
         if (status.toLowerCase() === 'pending') {
             // Check if overdue
             if (dueDate) {
@@ -357,7 +409,11 @@ const TransactionTable: React.FC<TransactionTableProps> = ({
     };
 
     // Add priority status weight for sorting
-    const getPriorityWeight = (status: string, priorityStatus?: string, dueDate?: string): number => {
+    const getPriorityWeight = (status: string | undefined, priorityStatus?: string, dueDate?: string): number => {
+        if (!status) {
+            return 0; // Lowest priority for unknown status
+        }
+        
         if (status.toLowerCase() === 'pending') {
             // Check if overdue first
             if (dueDate) {
@@ -455,7 +511,7 @@ const TransactionTable: React.FC<TransactionTableProps> = ({
 
     // When mapping/filtering transaction types, if isSales(user), filter out 'Manual correction' types from the displayed transactions.
     const filteredTransactions = apiTransactions.filter(transaction => {
-        if (isSales(user) && transaction.transaction_type === 'Manual correction') {
+        if (isSales(user) && transaction.transaction_type === 'ADJUSTMENT') {
             return false;
         }
         return true;

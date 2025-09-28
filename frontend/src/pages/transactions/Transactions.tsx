@@ -15,12 +15,52 @@ export default function TransactionsPage() {
     const navigate = useNavigate();
     const location = useLocation();
     
-    const [activeTab, setActiveTab] = useState("completed");
-    const [stockMovementType, setStockMovementType] = useState<'in' | 'out' | null>(null);
-    const [stockInType, setStockInType] = useState<string | null>(null);
-    const [stockOutType, setStockOutType] = useState<string | null>(null);
+    const [activeTab, setActiveTab] = useState("all");
+    const [transactionType, setTransactionType] = useState<'Incoming' | 'Outgoing' | 'Adjustment' | null>(null);
+    const [releaseStatus, setReleaseStatus] = useState<string | null>(null);
+    const [paymentStatus, setPaymentStatus] = useState<string | null>(null);
+    const [orInvoiceStatus, setOrInvoiceStatus] = useState<string | null>(null);
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [isAddTransactionModalOpen, setIsAddTransactionModalOpen] = useState(false);
+    
+    // Date range filter state
+    const [startDate, setStartDate] = useState<string>('');
+    const [endDate, setEndDate] = useState<string>('');
+    const [dateRangeError, setDateRangeError] = useState<string>('');
+
+    // Validate date range
+    const validateDateRange = (start: string, end: string) => {
+        if (start && end && new Date(start) > new Date(end)) {
+            setDateRangeError('Start date cannot be after end date');
+            return false;
+        } else {
+            setDateRangeError('');
+            return true;
+        }
+    };
+
+    // Handle start date change with validation
+    const handleStartDateChange = (value: string) => {
+        setStartDate(value);
+        // If end date exists and start date is after end date, clear end date
+        if (value && endDate && new Date(value) > new Date(endDate)) {
+            setEndDate('');
+            setDateRangeError('');
+        } else {
+            validateDateRange(value, endDate);
+        }
+    };
+
+    // Handle end date change with validation
+    const handleEndDateChange = (value: string) => {
+        // If start date exists and end date is before start date, show error but don't set the value
+        if (value && startDate && new Date(startDate) > new Date(value)) {
+            setDateRangeError('End date cannot be before start date');
+            return;
+        }
+        setEndDate(value);
+        validateDateRange(startDate, value);
+    };
     
     // Toast state
     const [showToast, setShowToast] = useState(false);
@@ -99,26 +139,28 @@ export default function TransactionsPage() {
         setActiveTab(tab);
     };
 
-    const handleStockInTypeChange = (type: string | null) => {
-        setStockInType(type);
-        if (type) {
-            setStockMovementType('in');
-            setStockOutType(null);
-        } else if (!stockOutType) {
-            // Only reset movement type if neither filter is selected
-            setStockMovementType(null);
+    const handleTransactionTypeChange = (type: string | null) => {
+        if (type === 'Incoming' || type === 'Outgoing' || type === 'Adjustment') {
+            setTransactionType(type);
+        } else {
+            setTransactionType(null);
         }
+        // Reset status filters when changing transaction type
+        setReleaseStatus(null);
+        setPaymentStatus(null);
+        setOrInvoiceStatus(null);
     };
 
-    const handleStockOutTypeChange = (type: string | null) => {
-        setStockOutType(type);
-        if (type) {
-            setStockMovementType('out');
-            setStockInType(null);
-        } else if (!stockInType) {
-            // Only reset movement type if neither filter is selected
-            setStockMovementType(null);
-        }
+    const handleReleaseStatusChange = (status: string | null) => {
+        setReleaseStatus(status);
+    };
+
+    const handlePaymentStatusChange = (status: string | null) => {
+        setPaymentStatus(status);
+    };
+
+    const handleOrInvoiceStatusChange = (status: string | null) => {
+        setOrInvoiceStatus(status);
     };
 
     const handleAddTransaction = () => {
@@ -145,20 +187,16 @@ export default function TransactionsPage() {
 
     // Calculate active filter count
     const activeFilterCount = [
-        stockMovementType,
-        stockInType,
-        stockOutType
+        transactionType,
+        releaseStatus,
+        paymentStatus,
+        orInvoiceStatus,
+        startDate,
+        endDate
     ].filter(Boolean).length;
 
     // Only show Add Transaction button for Sales if allowed
     const canAddTransaction = !isSales(user) || true; // Sales can always add, but AddTransaction page will restrict type
-
-    const stockInOptions = isSales(user)
-        ? ['Receive goods', 'Return goods']
-        : ['Receive goods', 'Return goods', 'Manual correction (+)'];
-    const stockOutOptions = isSales(user)
-        ? ['Dispatch goods', 'Reserve goods']
-        : ['Dispatch goods', 'Reserve goods', 'Manual correction (-)'];
 
     return (
         <div className="flex flex-col lg:flex-row min-h-screen overflow-hidden">
@@ -195,21 +233,79 @@ export default function TransactionsPage() {
 
                     {/* Filters Section */}
                     <div className="overflow-x-auto pb-2 mb-1">
+                        {/* Date Range and Status Filters */}
+                        <div className="flex items-center gap-2.5 mb-3 min-w-max">
+                            <div className="flex flex-col gap-2">
+                                <div className="flex items-center gap-2">
+                                    <label className="text-sm font-medium text-gray-700">Date Range:</label>
+                                    <input
+                                        type="date"
+                                        value={startDate}
+                                        onChange={(e) => handleStartDateChange(e.target.value)}
+                                        className={`px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 ${
+                                            dateRangeError 
+                                                ? 'border-red-500 focus:ring-red-500' 
+                                                : 'border-gray-300 focus:ring-blue-500'
+                                        }`}
+                                        placeholder="Start Date"
+                                    />
+                                    <span className="text-gray-500">to</span>
+                                    <input
+                                        type="date"
+                                        value={endDate}
+                                        onChange={(e) => handleEndDateChange(e.target.value)}
+                                        className={`px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 ${
+                                            dateRangeError 
+                                                ? 'border-red-500 focus:ring-red-500' 
+                                                : 'border-gray-300 focus:ring-blue-500'
+                                        }`}
+                                        placeholder="End Date"
+                                    />
+                                </div>
+                                
+                                {/* Date Range Error Message */}
+                                {dateRangeError && (
+                                    <div className="text-sm text-red-600 ml-24">
+                                        {dateRangeError}
+                                    </div>
+                                )}
+                            </div>
+                            
+                            {/* Clear Filters Button */}
+                            {activeFilterCount > 0 && (
+                                <button
+                                    onClick={() => {
+                                        setStartDate('');
+                                        setEndDate('');
+                                        setDateRangeError('');
+                                        setTransactionType(null);
+                                        setReleaseStatus(null);
+                                        setPaymentStatus(null);
+                                        setOrInvoiceStatus(null);
+                                    }}
+                                    className="px-3 py-1.5 text-sm text-red-600 hover:text-red-700 border border-red-300 hover:border-red-400 rounded-lg"
+                                >
+                                    Clear All
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Transaction Type Tabs and Status Filters */}
                         <div className="flex items-center gap-2.5 min-w-max">
                             <button 
-                                onClick={() => handleTabChange("completed")}
+                                onClick={() => handleTabChange("all")}
                                 className={`flex items-center gap-1.5 cursor-pointer py-1.5 px-3.5 rounded-lg transition-all whitespace-nowrap active:scale-95 ${
-                                    activeTab === "completed" 
+                                    activeTab === "all" 
                                         ? "bg-[#F2F2FB] text-[#0504AA] border-[1.5px] border-[#DADAF3]" 
                                         : "border-[1.5px] border-[#EBEAEA] text-[#6F6F6F] hover:bg-gray-50"
                                 }`}
                             >
-                                Completed Transactions
+                                All Transactions
                             </button>
                             
                             <button 
                                 onClick={() => handleTabChange("pending")}
-                                className={`flex items-center cursor-pointer gap-1.5 py-1.5 px-3.5 rounded-lg transition-all whitespace-nowrap active:scale-95 ${
+                                className={`flex items-center gap-1.5 cursor-pointer py-1.5 px-3.5 rounded-lg transition-all whitespace-nowrap active:scale-95 ${
                                     activeTab === "pending" 
                                         ? "bg-[#F2F2FB] text-[#0504AA] border-[1.5px] border-[#DADAF3]" 
                                         : "border-[1.5px] border-[#EBEAEA] text-[#6F6F6F] hover:bg-gray-50"
@@ -217,25 +313,50 @@ export default function TransactionsPage() {
                             >
                                 Pending Transactions
                             </button>
+                            
+                            <button 
+                                onClick={() => handleTabChange("completed")}
+                                className={`flex items-center cursor-pointer gap-1.5 py-1.5 px-3.5 rounded-lg transition-all whitespace-nowrap active:scale-95 ${
+                                    activeTab === "completed" 
+                                        ? "bg-[#F2F2FB] text-[#0504AA] border-[1.5px] border-[#DADAF3]" 
+                                        : "border-[1.5px] border-[#EBEAEA] text-[#6F6F6F] hover:bg-gray-50"
+                                }`}
+                            >
+                                Completed Transactions
+                            </button>
 
-                            {/* Stock-ins filter only for non-Sales */}
-                            {!isSales(user) && (
-                                <FilterDropdown
-                                    label="Stock-ins"
-                                    options={stockInOptions}
-                                    value={stockInType}
-                                    onChange={handleStockInTypeChange}
-                                />
-                            )}
+                            {/* Transaction Type Filter */}
+                            <FilterDropdown
+                                label="Transaction Type"
+                                options={['Incoming', 'Outgoing', 'Adjustment']}
+                                value={transactionType}
+                                onChange={handleTransactionTypeChange}
+                            />
 
-                            {/* Stock-outs filter: hide for Sales */}
-                            {!isSales(user) && (
-                                <FilterDropdown
-                                    label="Stock-outs"
-                                    options={stockOutOptions}
-                                    value={stockOutType}
-                                    onChange={handleStockOutTypeChange}
-                                />
+                            {/* Status Filters for OUTGOING transactions only */}
+                            {transactionType === 'Outgoing' && (
+                                <>
+                                    <FilterDropdown
+                                        label="Release Status"
+                                        options={['Released', 'Not Released']}
+                                        value={releaseStatus}
+                                        onChange={handleReleaseStatusChange}
+                                    />
+
+                                    <FilterDropdown
+                                        label="Payment Status"
+                                        options={['Paid', 'Not Paid']}
+                                        value={paymentStatus}
+                                        onChange={handlePaymentStatusChange}
+                                    />
+
+                                    <FilterDropdown
+                                        label="O.R/Invoice Status"
+                                        options={['Sent', 'Not Sent']}
+                                        value={orInvoiceStatus}
+                                        onChange={handleOrInvoiceStatusChange}
+                                    />
+                                </>
                             )}
 
                             <div className={`flex-shrink-0 flex items-center gap-1.5 py-1.5 px-3.5 rounded-lg border-[1.5px] border-[#DADAF3] text-[#0504AA] bg-[#F2F2FB]`}>
@@ -246,13 +367,16 @@ export default function TransactionsPage() {
                     </div>
 
                     <TransactionTable 
-                        key={`transactions-${activeTab}-${stockMovementType || 'all'}`}
-                        transactionType={activeTab as 'completed' | 'pending'}
-                        stockMovementType={stockMovementType}
+                        key={`transactions-${activeTab}-${transactionType || 'all'}-${releaseStatus || ''}-${paymentStatus || ''}-${orInvoiceStatus || ''}-${startDate}-${endDate}`}
+                        transactionType={activeTab as 'completed' | 'pending' | 'all'}
                         searchQuery=""
                         filters={{
-                            ...(stockInType ? { type: stockInType } : {}),
-                            ...(stockOutType ? { type: stockOutType } : {})
+                            ...(transactionType ? { transactionType } : {}),
+                            ...(releaseStatus ? { releaseStatus } : {}),
+                            ...(paymentStatus ? { paymentStatus } : {}),
+                            ...(orInvoiceStatus ? { orInvoiceStatus } : {}),
+                            ...(startDate ? { startDate } : {}),
+                            ...(endDate ? { endDate } : {})
                         }}
                         onTransactionUpdate={handleTransactionUpdate}
                         userList={userList}

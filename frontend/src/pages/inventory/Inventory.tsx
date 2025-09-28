@@ -23,15 +23,9 @@ export default function InventoryPage() {
     const [toastType, setToastType] = useState<'loading' | 'success' | 'error'>('success');
     
     const [filters, setFilters] = useState<{
-        item_type: string | null;
-        category: string | null;
         brand: string | null;
-        availability_status: string | null;
     }>({
-        item_type: null,
-        category: null,
-        brand: null,
-        availability_status: null
+        brand: null
     });
     const [sort, setSort] = useState<{ field: string; direction: 'asc' | 'desc' }>({ field: '', direction: 'asc' });
     const { user } = useAuthContext();
@@ -46,22 +40,13 @@ export default function InventoryPage() {
         const params = new URLSearchParams(location.search);
         
         // Get all parameters directly from the search params
-        const availabilityStatus = params.get('availability_status');
-        const itemType = params.get('item_type');
-        const category = params.get('category');
         const brand = params.get('brand');
         
-        console.log('Direct from URL - availability_status:', availabilityStatus);
-        console.log('Direct from URL - item_type:', itemType);
-        console.log('Direct from URL - category:', category);
         console.log('Direct from URL - brand:', brand);
         
         // Create new filters object based on URL parameters
         const newFilters = {
-            item_type: itemType,
-            category: category,
-            brand: brand,
-            availability_status: availabilityStatus
+            brand: brand
         };
         
         console.log('Setting filters directly from URL:', newFilters);
@@ -117,10 +102,7 @@ export default function InventoryPage() {
         
         // Update URL with new filters for shareable links
         const params = new URLSearchParams();
-        if (newFilters.item_type) params.append('item_type', newFilters.item_type);
-        if (newFilters.category) params.append('category', newFilters.category);
         if (newFilters.brand) params.append('brand', newFilters.brand);
-        if (newFilters.availability_status) params.append('availability_status', newFilters.availability_status);
         
         console.log('URL params:', params.toString()); // Debug log
         
@@ -157,10 +139,7 @@ export default function InventoryPage() {
         try {
             // Build query parameters based on current filters and sort
             const params = new URLSearchParams();
-            if (filters.item_type) params.append('item_type', filters.item_type);
-            if (filters.category) params.append('category', filters.category);
             if (filters.brand) params.append('brand', filters.brand);
-            if (filters.availability_status) params.append('availability_status', filters.availability_status);
             
             // Add sort configuration if present
             if (sort.field) {

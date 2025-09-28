@@ -29,18 +29,7 @@ export default function InventoryStats({ onFilterChange }: InventoryStatsProps) 
     useEffect(() => {
         const fetchStats = async () => {
             try {
-                // Try to get stats from dedicated endpoint first
-                try {
-                    const response = await itemsApi.getStats();
-                    if (response.status === 'success' && response.data) {
-                        setStats(response.data);
-                        return;
-                    }
-                } catch (statsError) {
-                    console.log('Stats endpoint not available, calculating from items list...');
-                }
-
-                // Fallback: Calculate stats from all items
+                // Calculate stats from all items - remove the stats endpoint call since it doesn't exist
                 const params = new URLSearchParams({ all: 'true' });
                 const itemsResponse = await itemsApi.getAll(params);
                 
@@ -55,13 +44,20 @@ export default function InventoryStats({ onFilterChange }: InventoryStatsProps) 
                     }
 
                     // Calculate stats from items
-                    const calculatedStats = {
-                        total_items: items.length,
-                        low_stock: items.filter(item => 
-                            item.quantity <= item.threshold_value && item.quantity > 0
-                        ).length,
-                        out_of_stock: items.filter(item => item.quantity === 0).length
-                    };
+                    const calculatedStats = items.reduce((acc, item) => {
+                        acc.total_items++;
+                        
+                        // Use a default threshold value of 0 if not set
+                        const thresholdValue = item.threshold_value || 0;
+                        
+                        if (item.quantity === 0) {
+                            acc.out_of_stock++;
+                        } else if (item.quantity <= thresholdValue && item.quantity > 0) {
+                            acc.low_stock++;
+                        }
+                        
+                        return acc;
+                    }, { total_items: 0, low_stock: 0, out_of_stock: 0 });
 
                     setStats(calculatedStats);
                 } else {

@@ -42,7 +42,7 @@ export const useAuth = (): UseAuthReturn => {
     if (!lastCheck) return true;
     
     const timeSinceLastCheck = Date.now() - parseInt(lastCheck);
-    const checkInterval = 10 * 60 * 1000; // 10 minutes
+    const checkInterval = 15 * 60 * 1000; // 15 minutes (increased from 10)
     
     return timeSinceLastCheck > checkInterval;
   };
@@ -59,8 +59,9 @@ export const useAuth = (): UseAuthReturn => {
         console.log('Token expires at:', new Date(exp));
         console.log('Token is', exp > now ? 'valid' : 'expired');
         
-        // If token expires in less than 5 minutes, it's considered expired for our purposes
-        return exp > (now + 5 * 60 * 1000);
+        // Only consider token expired if it's actually expired (no buffer)
+        // Let the backend handle token refresh when needed
+        return exp > now;
       } catch (e) {
         console.log('Error parsing token:', e);
         return false;
@@ -95,6 +96,7 @@ export const useAuth = (): UseAuthReturn => {
           try {
             const payload = JSON.parse(atob(accessToken.split('.')[1]));
             setUser({
+              id: payload.user_id || payload.account_id,
               account_id: payload.user_id || payload.account_id,
               username: payload.username,
               role: payload.role || 'User',
@@ -198,6 +200,7 @@ export const useAuth = (): UseAuthReturn => {
           
           // Set user directly from token data
           setUser({
+            id: decoded.user_id || decoded.account_id,
             account_id: decoded.user_id || decoded.account_id,
             username: decoded.username,
             role: decoded.role || 'User',

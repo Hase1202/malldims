@@ -23,10 +23,7 @@ import ItemBatchesPage from './pages/inventory/ItemBatchesPage';
 
 // Customer Management Pages
 import CustomersPage from './pages/customers/CustomersPage';
-import AddCustomerPage from './pages/customers/AddCustomerPage';
-import CustomerDetailsPage from './pages/customers/CustomerDetailsPage';
-import EditCustomerPage from './pages/customers/EditCustomerPage';
-import AddSpecialPricingPage from './pages/customers/AddSpecialPricingPage';
+import ManagePricingPage from './pages/customers/ManagePricingPage';
 
 import './index.css';
 
@@ -79,10 +76,7 @@ function AppLayout() {
         
         {/* Customer Management Routes */}
         <Route path="/customers" element={<CustomersPage />} />
-        <Route path="/customers/add" element={<AddCustomerPage />} />
-        <Route path="/customers/:id" element={<CustomerDetailsPage />} />
-        <Route path="/customers/:id/edit" element={<EditCustomerPage />} />
-        <Route path="/customers/:id/special-pricing/add" element={<AddSpecialPricingPage />} />
+        <Route path="/customers/:id/manage-pricing" element={<ManagePricingPage />} />
         
         <Route path="/brands/*" element={<BrandsPage />} />
         <Route path="/alerts/*" element={<AlertsPage />} />

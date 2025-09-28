@@ -91,18 +91,6 @@ const CustomersPage = () => {
     }
   };
 
-  const getPricingTierColor = (tier: string) => {
-    const colors = {
-      'RD': 'bg-red-50 text-red-800',
-      'PD': 'bg-pink-50 text-pink-800',
-      'DD': 'bg-orange-50 text-orange-800',
-      'CD': 'bg-yellow-50 text-yellow-800',
-      'RS': 'bg-green-50 text-green-800',
-      'SUB': 'bg-blue-50 text-blue-800',
-      'SRP': 'bg-gray-50 text-gray-800'
-    };    return colors[tier as keyof typeof colors] || 'bg-gray-50 text-gray-800';
-  };
-
   const handleCustomerModalClose = () => {
     setShowCustomerModal(false);
     setSelectedCustomerId(null);
@@ -206,16 +194,20 @@ const CustomersPage = () => {
 
         {/* Customers Table */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-          <div className="overflow-x-auto">            <table className="w-full">
-              <thead><tr className="bg-gray-50 border-b border-gray-200">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200">
                   <th className="text-left p-4 font-medium text-gray-700">Company</th>
                   <th className="text-left p-4 font-medium text-gray-700">Contact Person</th>
                   <th className="text-left p-4 font-medium text-gray-700">Type</th>
-                  <th className="text-left p-4 font-medium text-gray-700">Pricing Tier</th>
-                  <th className="text-left p-4 font-medium text-gray-700">Contact</th>
+                  <th className="text-left p-4 font-medium text-gray-700">Platform</th>
                   <th className="text-left p-4 font-medium text-gray-700">Status</th>
-                </tr>              </thead>
-              <tbody>{customers.map((customer) => (                  <tr 
+                </tr>
+              </thead>
+              <tbody>
+                {customers.map((customer) => (
+                  <tr 
                     key={customer.customer_id} 
                     className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors"
                     onClick={() => {
@@ -236,18 +228,18 @@ const CustomersPage = () => {
                       </span>
                     </td>
                     <td className="p-4">
-                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${getPricingTierColor(customer.pricing_tier)}`}>
-                        {customer.pricing_tier}
+                      <span className="capitalize px-2 py-1 bg-blue-50 text-blue-800 rounded-full text-xs font-medium">
+                        {customer.platform?.replace('_', ' ') || 'Not set'}
                       </span>
                     </td>
-                    <td className="p-4 text-gray-700">{customer.contact_number}</td>
                     <td className="p-4">
                       <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                         customer.status === 'Active' ? 'bg-green-50 text-green-800' : 'bg-gray-50 text-gray-800'
                       }`}>
                         {customer.status}
                       </span>
-                    </td>                  </tr>
+                    </td>
+                  </tr>
                 ))}
               </tbody>
             </table>

@@ -1,17 +1,18 @@
 from django.core.validators import RegexValidator
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+from django.db.models import Sum
 from django.utils import timezone
 
 # Pricing tier choices - shared across models
 PRICING_TIER_CHOICES = [
+    ('SRP', 'Suggested Retail Price'),
     ('RD', 'Regional Distributor'),
     ('PD', 'Provincial Distributor'),
     ('DD', 'District Distributor'),
     ('CD', 'City Distributor'),
     ('RS', 'Reseller'),
-    ('SUB', 'Sub-Reseller'),
-    ('SRP', 'Suggested Retail Price'),
+    ('SUB-RS', 'Sub-Reseller'),
 ]
 
 class Account(AbstractUser):
@@ -28,13 +29,6 @@ class Account(AbstractUser):
     
     def __str__(self):
         return f"{self.username} ({self.role})"
-    
-    def get_allowed_selling_tiers(self):
-        """
-        Get the tiers a user can sell at.
-        Since cost tiers were removed, all users can access all selling tiers.
-        """
-        return ['RD', 'PD', 'DD', 'CD', 'RS', 'SUB', 'SRP']
 
 # Brand model for beauty products
 class Brand(models.Model):
@@ -50,7 +44,7 @@ class Brand(models.Model):
     ]
     
     brand_id = models.AutoField(primary_key=True)
-    brand_name = models.CharField(max_length=100)
+    brand_name = models.CharField(max_length=100, unique=True)
     street_number = models.CharField(max_length=20, blank=True, null=True)
     street_name = models.CharField(max_length=100, blank=True, null=True)
     city = models.CharField(max_length=50, blank=True, null=True)
@@ -81,10 +75,17 @@ class Brand(models.Model):
     def __str__(self):
         return f"{self.brand_name} ({self.get_vat_classification_display()})"
 
-# New Customer model for beauty distribution
+# Customer model for beauty distribution
 class Customer(models.Model):
+    PLATFORM_CHOICES = [
+        ('whatsapp', 'WhatsApp'),
+        ('messenger', 'Messenger'),
+        ('viber', 'Viber'),
+        ('business_suite', 'Business Suite'),
+    ]
+    
     customer_id = models.AutoField(primary_key=True)
-    company_name = models.CharField(max_length=100)
+    company_name = models.CharField(max_length=100, unique=True)
     contact_person = models.CharField(max_length=50)
     address = models.TextField()
     contact_number = models.CharField(max_length=15)
@@ -101,12 +102,12 @@ class Customer(models.Model):
         ]
     )
     
-    # Customer's pricing tier
-    pricing_tier = models.CharField(
-        max_length=3,
-        choices=PRICING_TIER_CHOICES,
-        default='SRP',
-        help_text="The pricing tier this customer is eligible for"
+    # Replace contact field with platform field
+    platform = models.CharField(
+        max_length=20,
+        choices=PLATFORM_CHOICES,
+        default='whatsapp',  # Default value for migration
+        help_text="Preferred communication platform"
     )
     
     created_at = models.DateTimeField(auto_now_add=True)
@@ -122,371 +123,225 @@ class Customer(models.Model):
     def __str__(self):
         return self.company_name
 
-class Item(models.Model):
-    item_id = models.AutoField(primary_key=True)
-    item_name = models.CharField(max_length=100)
-    model_number = models.CharField(max_length=50)
-    item_type = models.CharField(max_length=50)
-    category = models.CharField(max_length=50)
-    quantity = models.SmallIntegerField()
-    threshold_value = models.SmallIntegerField()
+# New model: Customer-Brand Pricing relationship
+class CustomerBrandPricing(models.Model):
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE)
     brand = models.ForeignKey(Brand, on_delete=models.CASCADE)
-    availability_status = models.CharField(max_length=20, default='In Stock')
+    pricing_tier = models.CharField(
+        max_length=10,
+        choices=PRICING_TIER_CHOICES,
+        help_text="The pricing tier this customer gets for this brand"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        db_table = 'customer_brand_pricing'
+        unique_together = ['customer', 'brand']
+        verbose_name = "Customer Brand Pricing"
+        verbose_name_plural = "Customer Brand Pricing"
+
     def __str__(self):
-        return f"{self.item_name} ({self.model_number})"
+        return f"{self.customer.company_name} - {self.brand.brand_name} ({self.get_pricing_tier_display()})"
+
+# Restructured Item model
+class Item(models.Model):
+    UOM_CHOICES = [
+        ('pc', 'Piece'),
+        ('pack', 'Pack'),
+    ]
+    
+    item_id = models.AutoField(primary_key=True)
+    brand = models.ForeignKey(Brand, on_delete=models.CASCADE)  # Moved to top for organizational clarity
+    item_name = models.CharField(max_length=100)
+    sku = models.CharField(max_length=50, unique=True, blank=True, null=True)  # Auto-generated, unique
+    uom = models.CharField(
+        max_length=10,
+        choices=UOM_CHOICES,
+        default='pc',
+        help_text="Unit of Measurement"
+    )
+    # Remove direct quantity field - will be calculated from batches
+    # quantity = models.SmallIntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        # Save first to ensure we have an ID and brand relationship
+        is_new = self.pk is None
+        super().save(*args, **kwargs)
+        
+        # Auto-generate SKU if not provided and this is a new item
+        if not self.sku and is_new and self.brand_id:
+            self.sku = self.generate_sku()
+            # Save again with the generated SKU
+            super().save(update_fields=['sku'])
+
+    def generate_sku(self):
+        """Generate SKU in format: {brand_id + 100}-{item_number:03d}"""
+        # Get the brand ID and add 100 for the first 3 digits
+        brand_code = self.brand_id + 100
+        
+        # Get the next item number for this brand
+        # Count existing items for this brand (excluding current item if updating)
+        existing_items = Item.objects.filter(brand_id=self.brand_id)
+        if self.pk:  # If this is an update, exclude the current item
+            existing_items = existing_items.exclude(pk=self.pk)
+        
+        item_count = existing_items.count() + 1
+        
+        # Format as 3 digits
+        item_number = f"{item_count:03d}"
+        
+        # Combine to create SKU
+        sku = f"{brand_code}-{item_number}"
+        
+        # Check if this SKU already exists and increment if needed
+        while Item.objects.filter(sku=sku).exclude(pk=self.pk if self.pk else 0).exists():
+            item_count += 1
+            item_number = f"{item_count:03d}"
+            sku = f"{brand_code}-{item_number}"
+        
+        return sku
+
+    @property
+    def total_quantity(self):
+        """
+        Calculates the total quantity of the item by summing the remaining quantities of all its batches.
+        """
+        return self.batches.aggregate(total=Sum('remaining_quantity'))['total'] or 0
+
+    @property
+    def active_batches_count(self):
+        """
+        Counts the number of batches with a positive remaining quantity.
+        """
+        return self.batches.filter(remaining_quantity__gt=0).count()
+
+    def __str__(self):
+        return f"{self.item_name} ({self.sku})"
 
     class Meta:
         db_table = 'inventory_item'
-        unique_together = ['item_name', 'model_number', 'brand']  # Use brand for uniqueness
-    
-    @property
-    def current_brand(self):
-        """Get current brand"""
-        return self.brand
+        unique_together = ['item_name', 'brand']
 
-# Multi-tier pricing model for beauty products
-class ItemPricing(models.Model):
-    item = models.OneToOneField(Item, on_delete=models.CASCADE, related_name='pricing')
-    
-    # All 7 pricing tiers
-    regional_distributor = models.DecimalField(
-        max_digits=10, decimal_places=2, default=0,
-        verbose_name="Regional Distributor (RD) Price",
-        help_text="Highest tier price - for regional distributors"
+class ItemBatch(models.Model):
+    """
+    Represents a batch of a specific item, created from an incoming transaction.
+    """
+    item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='batches')
+    batch_number = models.PositiveIntegerField(help_text="Auto-generated batch number for the item, starting from 1.")
+    cost_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text="The cost price of items in this batch."
     )
-    provincial_distributor = models.DecimalField(
-        max_digits=10, decimal_places=2, default=0,
-        verbose_name="Provincial Distributor (PD) Price",
-        help_text="Second tier price - for provincial distributors"
+    initial_quantity = models.PositiveIntegerField(help_text="The initial quantity of items in this batch.")
+    remaining_quantity = models.PositiveIntegerField(help_text="The quantity of items remaining in this batch.")
+    created_at = models.DateTimeField(auto_now_add=True)
+    transaction = models.ForeignKey(
+        'Transaction',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="The incoming transaction that created this batch."
     )
-    district_distributor = models.DecimalField(
-        max_digits=10, decimal_places=2, default=0,
-        verbose_name="District Distributor (DD) Price",
-        help_text="Third tier price - for district distributors"
+
+    class Meta:
+        db_table = 'inventory_item_batch'
+        unique_together = ['item', 'batch_number']
+        ordering = ['item', 'batch_number']
+        verbose_name = "Item Batch"
+        verbose_name_plural = "Item Batches"
+
+    def save(self, *args, **kwargs):
+        if not self.pk:  # If this is a new batch
+            last_batch = ItemBatch.objects.filter(item=self.item).order_by('-batch_number').first()
+            self.batch_number = (last_batch.batch_number + 1) if last_batch else 1
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.item.item_name} - Batch {self.batch_number}"
+
+# New model: Item Tier Pricing
+class ItemTierPricing(models.Model):
+    item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='tier_pricing')
+    pricing_tier = models.CharField(
+        max_length=10,
+        choices=PRICING_TIER_CHOICES,
+        help_text="The pricing tier this price applies to"
     )
-    city_distributor = models.DecimalField(
-        max_digits=10, decimal_places=2, default=0,
-        verbose_name="City Distributor (CD) Price",
-        help_text="Fourth tier price - for city distributors"
+    price = models.DecimalField(
+        max_digits=10, 
+        decimal_places=2,
+        help_text="Standard price for this item at this tier"
     )
-    reseller = models.DecimalField(
-        max_digits=10, decimal_places=2, default=0,
-        verbose_name="Reseller (RS) Price",
-        help_text="Fifth tier price - for resellers"
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'item_tier_pricing'
+        unique_together = ['item', 'pricing_tier']
+        verbose_name = "Item Tier Pricing"
+        verbose_name_plural = "Item Tier Pricing"
+
+    def __str__(self):
+        return f"{self.item.item_name} - {self.get_pricing_tier_display()}: ₱{self.price}"
+
+# New model: Customer Special Pricing
+class CustomerSpecialPricing(models.Model):
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE)
+    item = models.ForeignKey(Item, on_delete=models.CASCADE)
+    discount = models.DecimalField(
+        max_digits=10, 
+        decimal_places=2,
+        help_text="Price reduction (must be negative value)"
     )
-    sub_reseller = models.DecimalField(
-        max_digits=10, decimal_places=2, default=0,
-        verbose_name="Sub-Reseller (Sub-RS) Price",
-        help_text="Sixth tier price - for sub-resellers"
-    )
-    srp = models.DecimalField(
-        max_digits=10, decimal_places=2, default=0,
-        verbose_name="Suggested Retail Price (SRP)",
-        help_text="Lowest tier price - suggested retail price for end customers"
-    )
-    
-    # Metadata
-    is_active = models.BooleanField(default=True, help_text="Whether this pricing is currently active")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     created_by = models.ForeignKey(Account, on_delete=models.SET_NULL, null=True, blank=True)
 
     class Meta:
-        db_table = 'item_pricing'
-        verbose_name = "Item Pricing"
-        verbose_name_plural = "Item Pricing"
-
-    def __str__(self):
-        return f"Pricing for {self.item.item_name}"
-
-    def get_price_for_tier(self, tier):
-        """Get price for specific tier"""
-        tier_mapping = {
-            'RD': self.regional_distributor,
-            'PD': self.provincial_distributor,
-            'DD': self.district_distributor,
-            'CD': self.city_distributor,
-            'RS': self.reseller,
-            'SUB': self.sub_reseller,
-            'SRP': self.srp,
-        }
-        return tier_mapping.get(tier, self.srp)
-    
-    def get_allowed_selling_tiers(self, user_cost_tier):
-        """
-        Get the tiers a user can sell at based on their cost tier.
-        Rule: Users can only sell at tiers below their own cost tier.
-        """
-        tier_hierarchy = ['RD', 'PD', 'DD', 'CD', 'RS', 'SUB', 'SRP']
-        
-        try:
-            user_tier_index = tier_hierarchy.index(user_cost_tier)
-            # Return tiers below the user's tier (excluding their own tier)
-            allowed_tiers = tier_hierarchy[user_tier_index + 1:]
-            return allowed_tiers
-        except ValueError:
-            # If user tier not found, default to SRP only
-            return ['SRP']
-    
-    def validate_pricing_hierarchy(self):
-        """Validate that prices follow the hierarchy (RD >= PD >= DD >= CD >= RS >= SUB >= SRP)"""
-        prices = [
-            self.regional_distributor,
-            self.provincial_distributor,
-            self.district_distributor,
-            self.city_distributor,
-            self.reseller,
-            self.sub_reseller,
-            self.srp
-        ]
-        
-        for i in range(len(prices) - 1):
-            if prices[i] < prices[i + 1]:
-                return False, f"Price hierarchy violation: Higher tier must have higher or equal price"
-        
-        return True, "Pricing hierarchy is valid"
-
-# Inventory batch tracking with expiry dates and enhanced pricing
-class InventoryBatch(models.Model):
-    batch_id = models.AutoField(primary_key=True)
-    item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='batches')
-    
-    # Batch identification
-    batch_number = models.CharField(
-        max_length=50, 
-        help_text="Unique batch/lot number for tracking",
-        default="BATCH-001"  # Default for existing records
-    )
-    
-    # Cost and pricing information
-    cost_price = models.DecimalField(
-        max_digits=10, decimal_places=2,
-        help_text="Actual cost price paid for this batch"
-    )
-    cost_tier = models.CharField(
-        max_length=3,
-        choices=PRICING_TIER_CHOICES,
-        help_text="The pricing tier this batch was purchased at"
-    )
-    
-    # Discount tracking for price overrides
-    tier_discount_percentage = models.DecimalField(
-        max_digits=5, decimal_places=2, default=0,
-        help_text="Discount percentage from standard tier price (e.g., -5 for 5% discount)"
-    )
-    tier_discount_amount = models.DecimalField(
-        max_digits=10, decimal_places=2, default=0,
-        help_text="Fixed discount amount from standard tier price"
-    )
-    
-    # Stock quantities
-    initial_quantity = models.IntegerField(
-        help_text="Initial quantity when batch was received",
-        default=0  # Default for existing records
-    )
-    quantity_available = models.IntegerField(
-        default=0,
-        help_text="Current available quantity in this batch"
-    )
-    quantity_reserved = models.IntegerField(
-        default=0,
-        help_text="Quantity reserved for pending orders"
-    )
-    
-    # Expiry and quality tracking
-    expiry_date = models.DateField(
-        null=True, blank=True,
-        help_text="Product expiry date for FIFO management"
-    )
-    manufacturing_date = models.DateField(
-        null=True, blank=True,
-        help_text="Manufacturing date if available"
-    )
-    
-    # Purchase details
-    purchase_order_ref = models.CharField(
-        max_length=50, null=True, blank=True,
-        help_text="Reference to the purchase order"
-    )
-    purchase_date = models.DateField(
-        help_text="Date when this batch was purchased",
-        default='2025-01-01'  # Default for existing records
-    )
-    supplier_invoice_ref = models.CharField(
-        max_length=50, null=True, blank=True,
-        help_text="Supplier's invoice reference"
-    )
-    
-    # Status and tracking
-    batch_status = models.CharField(
-        max_length=20,
-        choices=[
-            ('Active', 'Active'),
-            ('Expired', 'Expired'),
-            ('Damaged', 'Damaged'),
-            ('Returned', 'Returned'),
-            ('Sold Out', 'Sold Out'),
-        ],
-        default='Active'
-    )
-    
-    # User tracking
-    created_by = models.ForeignKey(
-        Account, on_delete=models.SET_NULL, null=True, blank=True,
-        related_name='created_batches'
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
-    # Notes
-    notes = models.TextField(
-        blank=True, null=True,
-        help_text="Additional notes about this batch"
-    )
-
-    class Meta:
-        db_table = 'inventory_batch'
-        ordering = ['expiry_date', 'created_at']  # FIFO ordering
-        verbose_name = "Inventory Batch"
-        verbose_name_plural = "Inventory Batches"
-
-    def __str__(self):
-        return f"{self.item.item_name} - Batch {self.batch_number}"
-
-    @property
-    def is_expired(self):
-        """Check if batch is expired"""
-        if not self.expiry_date:
-            return False
-        return self.expiry_date < timezone.now().date()
-
-    @property
-    def days_to_expiry(self):
-        """Calculate days until expiry"""
-        if not self.expiry_date:
-            return None
-        delta = self.expiry_date - timezone.now().date()
-        return delta.days
-
-    @property
-    def quantity_sold(self):
-        """Calculate quantity sold from this batch"""
-        return self.initial_quantity - self.quantity_available - self.quantity_reserved
-
-    @property
-    def effective_cost_price(self):
-        """Calculate the effective cost price after discounts"""
-        if self.tier_discount_amount > 0:
-            return self.cost_price - self.tier_discount_amount
-        elif self.tier_discount_percentage > 0:
-            discount = (self.tier_discount_percentage / 100) * self.cost_price
-            return self.cost_price - discount
-        return self.cost_price
-    
-    @property
-    def can_sell_at_tier(self):
-        """
-        Determine which tier this batch can be sold at based on cost tier and discounts.
-        If purchased with discount, user may be eligible to sell at the original tier.
-        """
-        if self.tier_discount_percentage > 0 or self.tier_discount_amount > 0:
-            # If purchased with discount, can sell at the original tier
-            return self.cost_tier
-        else:
-            # Normal case - can sell at tiers below cost tier
-            tier_hierarchy = ['RD', 'PD', 'DD', 'CD', 'RS', 'SUB', 'SRP']
-            try:
-                cost_tier_index = tier_hierarchy.index(self.cost_tier)
-                return tier_hierarchy[cost_tier_index + 1:] if cost_tier_index < len(tier_hierarchy) - 1 else ['SRP']
-            except ValueError:
-                return ['SRP']
-    
-    def reserve_quantity(self, quantity):
-        """Reserve quantity for a pending order"""
-        if quantity > self.quantity_available:
-            raise ValueError("Cannot reserve more than available quantity")
-        
-        self.quantity_available -= quantity
-        self.quantity_reserved += quantity
-        self.save()
-    
-    def release_reservation(self, quantity):
-        """Release reserved quantity back to available"""
-        if quantity > self.quantity_reserved:
-            raise ValueError("Cannot release more than reserved quantity")
-        
-        self.quantity_reserved -= quantity
-        self.quantity_available += quantity
-        self.save()
-    
-    def fulfill_order(self, quantity):
-        """Fulfill an order by reducing reserved quantity"""
-        if quantity > self.quantity_reserved:
-            raise ValueError("Cannot fulfill more than reserved quantity")
-        
-        self.quantity_reserved -= quantity
-        if self.quantity_available + self.quantity_reserved == 0:
-            self.batch_status = 'Sold Out'
-        self.save()
-
-# Customer special pricing
-class CustomerSpecialPrice(models.Model):
-    customer = models.ForeignKey(Customer, on_delete=models.CASCADE)
-    item = models.ForeignKey(Item, on_delete=models.CASCADE)
-    special_price = models.DecimalField(max_digits=10, decimal_places=2)
-    
-    # Approval workflow
-    is_approved = models.BooleanField(default=False)
-    approved_by = models.ForeignKey(Account, on_delete=models.SET_NULL, null=True, blank=True)
-    approved_at = models.DateTimeField(null=True, blank=True)
-    
-    created_by = models.ForeignKey(Account, on_delete=models.CASCADE, related_name='special_prices_created')
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = 'customer_special_price'
+        db_table = 'customer_special_pricing'
         unique_together = ['customer', 'item']
+        verbose_name = "Customer Special Pricing"
+        verbose_name_plural = "Customer Special Pricing"
 
+    def __str__(self):
+        return f"{self.customer.company_name} - {self.item.item_name}: ₱{self.discount}"
+
+# Restructured Transaction model
 class Transaction(models.Model):
+    TRANSACTION_TYPE_CHOICES = [
+        ('INCOMING', 'Incoming - Stock In from Brand'),
+        ('OUTGOING', 'Outgoing - Stock Out to Customer'),
+        ('ADJUSTMENT', 'Manual Inventory Adjustment'),
+    ]
+    
     transaction_id = models.AutoField(primary_key=True)
     brand = models.ForeignKey(Brand, on_delete=models.CASCADE)
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, null=True, blank=True)
     account = models.ForeignKey(Account, on_delete=models.CASCADE, null=True)
     
-    transaction_status = models.CharField(
-        max_length=20,
-        choices=[
-            ('Pending', 'Pending'),
-            ('Completed', 'Completed'),
-            ('Cancelled', 'Cancelled')
-        ],
-        default='Completed'
-    )
     transaction_type = models.CharField(
         max_length=20,
-        choices=[
-            ('Purchase', 'Purchase'),  # Incoming stock
-            ('Sale', 'Sale'),  # Outgoing stock
-            ('Return', 'Return'),
-            ('Receive Products', 'Receive Products'),
-            ('Return goods', 'Return goods'),
-            ('Dispatch goods', 'Dispatch goods'),
-            ('Reserve goods', 'Reserve goods'),
-            ('Manual correction', 'Manual correction')
-        ]
+        choices=TRANSACTION_TYPE_CHOICES,
+        help_text="Type of transaction: incoming stock or outgoing stock"
     )
     
-    # Payment and VAT fields
-    payment_status = models.CharField(
-        max_length=10,
-        choices=[('Paid', 'Paid'), ('Unpaid', 'Unpaid')],
-        default='Unpaid'
+    # New boolean fields for OUTGOING transactions
+    is_released = models.BooleanField(
+        default=False,
+        help_text="Whether the goods have been released/dispatched"
     )
-    
-    is_receipt_issued = models.BooleanField(default=False)
+    is_paid = models.BooleanField(
+        default=False,
+        help_text="Whether the payment has been received"
+    )
+    is_or_sent = models.BooleanField(
+        default=False,
+        help_text="Whether the O.R./Invoice has been sent"
+    )
     
     # VAT information
     vat_type = models.CharField(
@@ -499,126 +354,89 @@ class Transaction(models.Model):
     vat_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     
     transacted_date = models.DateField(auto_now_add=True)
-    created_at = models.DateTimeField(auto_now=True)
-    due_date = models.DateField(null=True)
-    priority_status = models.CharField(
-        max_length=20,
-        choices=[
-            ('Normal', 'Normal'),
-            ('Urgent', 'Urgent'),
-            ('Critical', 'Critical')
-        ],
-        default='Normal'
-    )
-    reference_number = models.CharField(max_length=20, null=True)
-    customer_name = models.CharField(max_length=50, null=True)  # Keep for backward compatibility
-    notes = models.TextField(null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    due_date = models.DateField(null=True, blank=True)
+    reference_number = models.CharField(max_length=20, null=True, blank=True)
+    notes = models.TextField(null=True, blank=True)
 
     class Meta:
         db_table = 'transaction'
 
+    def __str__(self):
+        return f"{self.get_transaction_type_display()} - {self.reference_number or self.transaction_id}"
+
     @property
-    def current_brand(self):
-        """Get current brand"""
-        return self.brand
-
-class InventoryChange(models.Model):
-    item = models.ForeignKey(Item, on_delete=models.CASCADE)
-    batch = models.ForeignKey(InventoryBatch, on_delete=models.CASCADE, null=True, blank=True)
-    transaction = models.ForeignKey(Transaction, on_delete=models.CASCADE, null=True)
-    requested_quantity = models.SmallIntegerField(null=True)
-    quantity_change = models.SmallIntegerField()
-    
-    # Enhanced pricing information
-    unit_price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    total_price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    
-    # Pricing tier used for this transaction
-    price_tier = models.CharField(
-        max_length=7,
-        choices=[
-            ('RD', 'Regional Distributor'),
-            ('PD', 'Provincial Distributor'),
-            ('DD', 'District Distributor'),
-            ('CD', 'City Distributor'),
-            ('RS', 'Reseller'),
-            ('SUB', 'Sub-Reseller'),
-            ('SRP', 'Suggested Retail Price'),
-            ('SPECIAL', 'Special Price')
-        ],
-        null=True, blank=True
-    )
-    
-    # Cost tracking for profit calculation
-    unit_cost = models.DecimalField(
-        max_digits=10, decimal_places=2, default=0,
-        help_text="Unit cost from the batch this item was sold from"
-    )
-    
-    # Profit calculation
-    profit_amount = models.DecimalField(
-        max_digits=10, decimal_places=2, default=0,
-        help_text="Profit per unit (unit_price - unit_cost)"
-    )
-    profit_margin_percentage = models.DecimalField(
-        max_digits=5, decimal_places=2, default=0,
-        help_text="Profit margin as percentage"
-    )
-    
-    # Change type for better tracking
-    change_type = models.CharField(
-        max_length=20,
-        choices=[
-            ('SALE', 'Sale'),
-            ('PURCHASE', 'Purchase'),
-            ('RETURN_IN', 'Return In'),
-            ('RETURN_OUT', 'Return Out'),
-            ('ADJUSTMENT', 'Adjustment'),
-            ('EXPIRED', 'Expired'),
-            ('DAMAGED', 'Damaged'),
-            ('TRANSFER', 'Transfer'),
-        ],
-        default='ADJUSTMENT'
-    )
-    
-    notes = models.TextField(null=True, blank=True)
-    created_at = models.DateTimeField(default=timezone.now)
-
-    class Meta:
-        db_table = 'inventory_change'
-        ordering = ['-created_at']
+    def is_completed(self):
+        """
+        Read-only property that returns True only if all completion criteria are met.
+        For OUTGOING transactions: is_released, is_paid, and is_or_sent must all be True.
+        For INCOMING transactions: always returns True (no additional completion criteria).
+        """
+        if self.transaction_type == 'OUTGOING':
+            return self.is_released and self.is_paid and self.is_or_sent
+        return True  # INCOMING transactions are completed when created
 
     def save(self, *args, **kwargs):
-        """Auto-calculate profit metrics on save"""
-        if self.unit_price and self.unit_cost:
-            self.profit_amount = self.unit_price - self.unit_cost
-            if self.unit_cost > 0:
-                self.profit_margin_percentage = (self.profit_amount / self.unit_cost) * 100
+        # Auto-generate reference number if not provided
+        if not self.reference_number:
+            self.reference_number = self.generate_reference_number()
         super().save(*args, **kwargs)
 
-# New model for tracking batch-specific sales
-class BatchSale(models.Model):
-    """Track sales from specific batches for FIFO and cost tracking"""
-    batch = models.ForeignKey(InventoryBatch, on_delete=models.CASCADE, related_name='sales')
-    inventory_change = models.ForeignKey(InventoryChange, on_delete=models.CASCADE, related_name='batch_sales')
+    def generate_reference_number(self):
+        """Generate sequential reference number in format: YEAR-NNNN"""
+        current_year = timezone.now().year
+        
+        # Get the last transaction for the current year
+        last_transaction = Transaction.objects.filter(
+            reference_number__startswith=f"{current_year}-"
+        ).order_by('-reference_number').first()
+        
+        if last_transaction and last_transaction.reference_number:
+            # Extract the number part and increment
+            try:
+                last_number = int(last_transaction.reference_number.split('-')[1])
+                next_number = last_number + 1
+            except (ValueError, IndexError):
+                next_number = 1
+        else:
+            next_number = 1
+        
+        # Format as 4-digit number with leading zeros
+        return f"{current_year}-{next_number:04d}"
+
+# Transaction items linking transactions to inventory items
+class TransactionItem(models.Model):
+    transaction = models.ForeignKey(Transaction, on_delete=models.CASCADE, related_name='items')
+    item = models.ForeignKey(Item, on_delete=models.CASCADE)
+    batch = models.ForeignKey(
+        ItemBatch,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="The specific batch this item is from (for outgoing transactions)."
+    )
+    quantity = models.IntegerField()
+    unit_price = models.DecimalField(max_digits=10, decimal_places=2)
+    total_price = models.DecimalField(max_digits=12, decimal_places=2)
     
-    quantity_sold = models.IntegerField()
-    sale_price_per_unit = models.DecimalField(max_digits=10, decimal_places=2)
-    cost_price_per_unit = models.DecimalField(max_digits=10, decimal_places=2)
-    
-    # Profit tracking
-    profit_per_unit = models.DecimalField(max_digits=10, decimal_places=2)
-    total_profit = models.DecimalField(max_digits=12, decimal_places=2)
+    # Pricing tier used for this transaction item
+    pricing_tier = models.CharField(
+        max_length=10,
+        choices=PRICING_TIER_CHOICES,
+        null=True, blank=True,
+        help_text="The pricing tier applied to this item"
+    )
     
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        db_table = 'batch_sale'
-        verbose_name = "Batch Sale"
-        verbose_name_plural = "Batch Sales"
+        db_table = 'transaction_item'
+        # Removed unique_together to allow same item multiple times with different batches
+
+    def __str__(self):
+        return f"{self.transaction} - {self.item.item_name} (Qty: {self.quantity})"
 
     def save(self, *args, **kwargs):
-        """Auto-calculate profit on save"""
-        self.profit_per_unit = self.sale_price_per_unit - self.cost_price_per_unit
-        self.total_profit = self.profit_per_unit * self.quantity_sold
+        """Auto-calculate total_price on save"""
+        self.total_price = self.quantity * self.unit_price
         super().save(*args, **kwargs)

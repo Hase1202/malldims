@@ -565,7 +565,7 @@ export default function HomePage() {
                                                     <div className="flex-1 overflow-hidden">
                                                         <p className="font-medium text-[#2C2C2C] truncate">{item.item_name}</p>
                                                         <p className="text-sm text-[#646464] truncate">
-                                                            {item.model_number || 'No model number'} | {item.category}
+                                                            {item.sku || 'No SKU'} | {item.category}
                                                         </p>
                                                     </div>
                                                     <div className="text-right ml-2 flex-shrink-0">

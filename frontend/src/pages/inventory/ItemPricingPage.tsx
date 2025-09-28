@@ -4,23 +4,13 @@ import { ArrowLeft, Save, AlertCircle, DollarSign } from 'lucide-react';
 import api from '../../lib/api';
 import Toast from '../../components/common/Toast';
 import Sidebar from '../../components/common/Sidebar';
+import SpecialPricingByCustomer from '../../components/features/Inventory/SpecialPricingByCustomer';
 
-interface PricingTier {
-  code: string;
-  name: string;
-  price: number;
-}
-
-interface ItemPricing {
+interface ItemTierPricing {
+  id?: number;
   item: number;
-  regional_distributor: number;
-  provincial_distributor: number;
-  district_distributor: number;
-  city_distributor: number;
-  reseller: number;
-  sub_reseller: number;
-  srp: number;
-  is_active: boolean;
+  pricing_tier: string;
+  price: number;
 }
 
 interface Item {
@@ -30,14 +20,18 @@ interface Item {
   brand_name: string;
 }
 
-const PRICING_TIERS: PricingTier[] = [
-  { code: 'RD', name: 'Regional Distributor', price: 0 },
-  { code: 'PD', name: 'Provincial Distributor', price: 0 },
-  { code: 'DD', name: 'District Distributor', price: 0 },
-  { code: 'CD', name: 'City Distributor', price: 0 },
-  { code: 'RS', name: 'Reseller', price: 0 },
-  { code: 'SUB', name: 'Sub-Reseller', price: 0 },
-  { code: 'SRP', name: 'Suggested Retail Price', price: 0 },
+interface TierPriceData {
+  [key: string]: number;
+}
+
+const PRICING_TIERS: { code: string; name: string }[] = [
+  { code: 'RD', name: 'Regional Distributor' },
+  { code: 'PD', name: 'Provincial Distributor' },
+  { code: 'DD', name: 'District Distributor' },
+  { code: 'CD', name: 'City Distributor' },
+  { code: 'RS', name: 'Reseller' },
+  { code: 'SUB-RS', name: 'Sub-Reseller' },
+  { code: 'SRP', name: 'Suggested Retail Price' },
 ];
 
 export default function ItemPricingPage() {
@@ -46,18 +40,8 @@ export default function ItemPricingPage() {
   
   const [item, setItem] = useState<Item | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [pricing, setPricing] = useState<ItemPricing>({
-    item: parseInt(itemId || '0'),
-    regional_distributor: 0,
-    provincial_distributor: 0,
-    district_distributor: 0,
-    city_distributor: 0,
-    reseller: 0,
-    sub_reseller: 0,
-    srp: 0,
-    is_active: true,
-  });
-  const [existingPricingId, setExistingPricingId] = useState<number | null>(null);
+  const [tierPrices, setTierPrices] = useState<TierPriceData>({});
+  const [existingPricing, setExistingPricing] = useState<ItemTierPricing[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{
@@ -81,17 +65,21 @@ export default function ItemPricingPage() {
       const itemResponse = await api.get(`/items/${itemId}/`);
       setItem(itemResponse.data);
 
-      // Try to fetch existing pricing
+      // Fetch existing tier pricing
       try {
-        const pricingResponse = await api.get(`/item-pricing/?item_id=${itemId}`);
-        if (pricingResponse.data.results && pricingResponse.data.results.length > 0) {
-          const existingPricing = pricingResponse.data.results[0];
-          setPricing(existingPricing);
-          setExistingPricingId(existingPricing.id);
-        }
+        const pricingResponse = await api.get(`/item-tier-pricing/?item=${itemId}`);
+        const pricingData = pricingResponse.data.results || pricingResponse.data;
+        setExistingPricing(pricingData);
+        
+        // Convert array to object for easier manipulation
+        const priceData: TierPriceData = {};
+        pricingData.forEach((pricing: ItemTierPricing) => {
+          priceData[pricing.pricing_tier] = pricing.price;
+        });
+        setTierPrices(priceData);
       } catch (pricingError) {
-        // No existing pricing found, use default values
         console.log('No existing pricing found, using defaults');
+        setTierPrices({});
       }
     } catch (error) {
       console.error('Error fetching item and pricing:', error);
@@ -105,11 +93,11 @@ export default function ItemPricingPage() {
     }
   };
 
-  const handlePriceChange = (tierField: string, value: string) => {
+  const handlePriceChange = (tierCode: string, value: string) => {
     const numericValue = parseFloat(value) || 0;
-    setPricing(prev => ({
+    setTierPrices(prev => ({
       ...prev,
-      [tierField]: numericValue
+      [tierCode]: numericValue
     }));
     
     // Clear validation errors when user makes changes
@@ -118,27 +106,28 @@ export default function ItemPricingPage() {
 
   const validatePricingHierarchy = (): string[] => {
     const errors: string[] = [];
-    const prices = [
-      { name: 'Regional Distributor', value: pricing.regional_distributor },
-      { name: 'Provincial Distributor', value: pricing.provincial_distributor },
-      { name: 'District Distributor', value: pricing.district_distributor },
-      { name: 'City Distributor', value: pricing.city_distributor },
-      { name: 'Reseller', value: pricing.reseller },
-      { name: 'Sub-Reseller', value: pricing.sub_reseller },
-      { name: 'SRP', value: pricing.srp },
-    ];
-
+    const tierOrder = ['RD', 'PD', 'DD', 'CD', 'RS', 'SUB-RS', 'SRP'];
+    
     // Check if any prices are negative
-    prices.forEach(price => {
-      if (price.value < 0) {
-        errors.push(`${price.name} price cannot be negative`);
+    tierOrder.forEach(tier => {
+      const price = tierPrices[tier] || 0;
+      if (price < 0) {
+        const tierName = PRICING_TIERS.find(t => t.code === tier)?.name || tier;
+        errors.push(`${tierName} price cannot be negative`);
       }
     });
 
     // Check hierarchy: each tier should be >= the next tier
-    for (let i = 0; i < prices.length - 1; i++) {
-      if (prices[i].value > 0 && prices[i + 1].value > 0 && prices[i].value < prices[i + 1].value) {
-        errors.push(`${prices[i].name} price should be greater than or equal to ${prices[i + 1].name} price`);
+    for (let i = 0; i < tierOrder.length - 1; i++) {
+      const currentTier = tierOrder[i];
+      const nextTier = tierOrder[i + 1];
+      const currentPrice = tierPrices[currentTier] || 0;
+      const nextPrice = tierPrices[nextTier] || 0;
+      
+      if (currentPrice > 0 && nextPrice > 0 && currentPrice < nextPrice) {
+        const currentTierName = PRICING_TIERS.find(t => t.code === currentTier)?.name || currentTier;
+        const nextTierName = PRICING_TIERS.find(t => t.code === nextTier)?.name || nextTier;
+        errors.push(`${currentTierName} price should be greater than or equal to ${nextTierName} price`);
       }
     }
 
@@ -156,20 +145,41 @@ export default function ItemPricingPage() {
       setSaving(true);
       setToast({ show: true, message: 'Saving pricing...', type: 'loading' });
 
-      if (existingPricingId) {
-        // Update existing pricing
-        await api.put(`/item-pricing/${existingPricingId}/`, pricing);
-      } else {
-        // Create new pricing
-        const response = await api.post('/item-pricing/', pricing);
-        setExistingPricingId(response.data.id);
-      }
+      // Create/update pricing for each tier
+      const promises = PRICING_TIERS.map(async (tier) => {
+        const price = tierPrices[tier.code] || 0;
+        if (price <= 0) return; // Skip tiers with no price set
+
+        // Find existing pricing for this tier
+        const existing = existingPricing.find(p => p.pricing_tier === tier.code);
+        
+        if (existing) {
+          // Update existing
+          await api.put(`/item-tier-pricing/${existing.id}/`, {
+            item: parseInt(itemId!),
+            pricing_tier: tier.code,
+            price: price
+          });
+        } else {
+          // Create new
+          await api.post('/item-tier-pricing/', {
+            item: parseInt(itemId!),
+            pricing_tier: tier.code,
+            price: price
+          });
+        }
+      });
+
+      await Promise.all(promises);
 
       setToast({
         show: true,
         message: 'Pricing saved successfully!',
         type: 'success'
       });
+
+      // Refresh data
+      fetchItemAndPricing();
 
       // Auto-hide success toast after 2 seconds
       setTimeout(() => {
@@ -179,8 +189,8 @@ export default function ItemPricingPage() {
       console.error('Error saving pricing:', error);
       let errorMessage = 'Failed to save pricing';
       
-      if (error.response?.data?.pricing_hierarchy) {
-        errorMessage = error.response.data.pricing_hierarchy;
+      if (error.response?.data?.detail) {
+        errorMessage = error.response.data.detail;
       } else if (error.response?.data?.message) {
         errorMessage = error.response.data.message;
       }
@@ -195,177 +205,143 @@ export default function ItemPricingPage() {
     }
   };
 
-  const getTierFieldName = (tierCode: string): keyof ItemPricing => {
-    const fieldMap: Record<string, keyof ItemPricing> = {
-      'RD': 'regional_distributor',
-      'PD': 'provincial_distributor',
-      'DD': 'district_distributor',
-      'CD': 'city_distributor',
-      'RS': 'reseller',
-      'SUB': 'sub_reseller',
-      'SRP': 'srp',
-    };
-    return fieldMap[tierCode] || 'srp';
-  };
   if (loading) {
     return (
-      <div className="flex flex-col lg:flex-row min-h-screen overflow-hidden">
+      <div className="flex h-screen">
         <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
-        <div className="flex-1 bg-[#F9F9F9] overflow-y-auto lg:ml-64">
-          <div className="min-h-screen flex items-center justify-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#0504AA]"></div>
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-current border-r-transparent"></div>
+            <p className="mt-2 text-gray-600">Loading item pricing...</p>
           </div>
         </div>
       </div>
     );
   }
 
-  if (!item) {
-    return (
-      <div className="flex flex-col lg:flex-row min-h-screen overflow-hidden">
-        <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
-        <div className="flex-1 bg-[#F9F9F9] overflow-y-auto lg:ml-64">
-          <div className="min-h-screen flex items-center justify-center">
-            <div className="text-center">
-              <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-              <h2 className="text-xl font-semibold text-gray-900 mb-2">Item Not Found</h2>
-              <p className="text-gray-600 mb-4">The requested item could not be found.</p>
-              <button
-                onClick={() => navigate('/inventory')}
-                className="bg-[#0504AA] text-white px-4 py-2 rounded-lg hover:bg-opacity-90"
-              >
-                Return to Inventory
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
   return (
-    <div className="flex flex-col lg:flex-row min-h-screen overflow-hidden">
+    <div className="flex h-screen bg-gray-50">
       <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
       
-      <div className="flex-1 bg-[#F9F9F9] overflow-y-auto lg:ml-64">
-        <div className="p-4 lg:p-8">
-          {/* Header */}
-          <div className="mb-6">
-            <button
-              onClick={() => navigate('/inventory')}
-              className="flex items-center text-gray-600 hover:text-gray-800 mb-4"
-            >
-              <ArrowLeft className="h-5 w-5 mr-2" />
-              Back to Inventory
-            </button>
-        
-        <div className="bg-white rounded-lg shadow-sm p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900 mb-2">Item Pricing Management</h1>
-              <div className="text-gray-600">
-                <p className="font-medium">{item.item_name}</p>
-                <p className="text-sm">Model: {item.model_number} | Brand: {item.brand_name}</p>
+      <div className="flex-1 flex flex-col overflow-hidden lg:ml-64">
+        {/* Header */}
+        <div className="bg-white shadow-sm border-b">
+          <div className="px-6 py-4">
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => navigate('/inventory')}
+                className="p-2 hover:bg-gray-100 rounded-full"
+              >
+                <ArrowLeft className="h-5 w-5 text-gray-600" />
+              </button>
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">Item Pricing</h1>
+                <p className="text-gray-600">{item?.item_name || 'Loading...'}</p>
               </div>
             </div>
-            <div className="flex items-center space-x-2">
-              <DollarSign className="h-8 w-8 text-[#0504AA]" />
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-6">
+          {/* Validation Errors */}
+          {validationErrors.length > 0 && (
+            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="h-5 w-5 text-red-600 mt-0.5" />
+                <div>
+                  <h3 className="text-sm font-medium text-red-800">Please fix the following errors:</h3>
+                  <ul className="mt-2 text-sm text-red-700 list-disc list-inside">
+                    {validationErrors.map((error, index) => (
+                      <li key={index}>{error}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
             </div>
+          )}
+
+          {/* Pricing Form */}
+          <div className="bg-white rounded-lg shadow-sm border">
+            <div className="p-6 border-b">
+              <div className="flex items-center gap-3">
+                <DollarSign className="h-6 w-6 text-blue-600" />
+                <div>
+                  <h2 className="text-lg font-semibold">Tier Pricing</h2>
+                  <p className="text-gray-600 text-sm">
+                    Set prices for each distributor tier. Higher tiers should have higher or equal prices.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6">
+              <div className="grid gap-6">
+                {PRICING_TIERS.map((tier) => {
+                  const currentPrice = tierPrices[tier.code] || 0;
+                  
+                  return (
+                    <div
+                      key={tier.code}
+                      className="p-4 border border-gray-200 bg-white rounded-lg"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-10 h-10 rounded-full flex items-center justify-center bg-gray-100 text-gray-700 font-semibold border">
+                            {tier.code}
+                          </div>
+                          <div>
+                            <h3 className="font-medium text-gray-900">{tier.name}</h3>
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center space-x-2">
+                          <span className="text-gray-500">₱</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={currentPrice}
+                            onChange={(e) => handlePriceChange(tier.code, e.target.value)}
+                            className="w-32 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#0504AA] focus:border-transparent"
+                            placeholder="0.00"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="p-6 border-t border-gray-200">
+              <div className="flex items-center justify-end">
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="flex items-center space-x-2 bg-[#0504AA] text-white px-6 py-2 rounded-lg hover:bg-opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Save className="h-4 w-4" />
+                  <span>{saving ? 'Saving...' : 'Save Pricing'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Special Pricing by Customer */}
+          <div className="bg-white rounded-lg shadow-sm mt-6">
+            <div className="p-6 border-b border-gray-200">
+              <h2 className="text-lg font-semibold text-gray-900 mb-2">Special Pricing by Customer</h2>
+              <p className="text-gray-600 text-sm">
+                View customers with special pricing for this item.
+              </p>
+            </div>
+            <SpecialPricingByCustomer itemId={parseInt(itemId || '0')} />
           </div>
         </div>
       </div>
 
-      {/* Validation Errors */}
-      {validationErrors.length > 0 && (
-        <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
-          <div className="flex items-start">
-            <AlertCircle className="h-5 w-5 text-red-500 mr-3 mt-0.5" />
-            <div>
-              <h3 className="text-sm font-medium text-red-800 mb-1">Pricing Validation Errors</h3>
-              <ul className="text-sm text-red-600 space-y-1">
-                {validationErrors.map((error, index) => (
-                  <li key={index}>• {error}</li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Pricing Tiers */}
-      <div className="bg-white rounded-lg shadow-sm">
-        <div className="p-6 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900 mb-2">Pricing Tiers</h2>
-          <p className="text-gray-600 text-sm">
-            Set prices for each distributor tier. Higher tiers should have higher or equal prices.
-          </p>
-        </div>
-
-        <div className="p-6">          <div className="grid gap-6">
-            {PRICING_TIERS.map((tier, index) => {
-              const fieldName = getTierFieldName(tier.code);
-              const currentPrice = pricing[fieldName] as number;
-              
-              return (
-                <div
-                  key={tier.code}
-                  className="p-4 border border-gray-200 bg-white rounded-lg"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                      <div className="w-10 h-10 rounded-full flex items-center justify-center bg-gray-100 text-gray-700 font-semibold border">
-                        {tier.code}
-                      </div>
-                      <div>
-                        <h3 className="font-medium text-gray-900">{tier.name}</h3>
-                      </div>
-                    </div>
-                    
-                    <div className="flex items-center space-x-2">
-                      <span className="text-gray-500">₱</span>
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={currentPrice}
-                        onChange={(e) => handlePriceChange(fieldName, e.target.value)}
-                        className="w-32 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#0504AA] focus:border-transparent"
-                        placeholder="0.00"
-                      />
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Actions */}
-        <div className="p-6 border-t border-gray-200">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <input
-                type="checkbox"
-                id="is_active"
-                checked={pricing.is_active}
-                onChange={(e) => setPricing(prev => ({ ...prev, is_active: e.target.checked }))}
-                className="h-4 w-4 text-[#0504AA] focus:ring-[#0504AA] border-gray-300 rounded"
-              />
-              <label htmlFor="is_active" className="text-sm text-gray-700">
-                Active pricing (uncheck to disable this pricing)
-              </label>
-            </div>
-            
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="flex items-center space-x-2 bg-[#0504AA] text-white px-6 py-2 rounded-lg hover:bg-opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Save className="h-4 w-4" />
-              <span>{saving ? 'Saving...' : 'Save Pricing'}</span>
-            </button>
-          </div>
-        </div>
-      </div>      {/* Toast Notification */}
+      {/* Toast Notification */}
       <Toast
         title={
           toast.type === 'loading' ? 'Saving...' : 
@@ -377,8 +353,6 @@ export default function ItemPricingPage() {
         isVisible={toast.show}
         onClose={() => setToast(prev => ({ ...prev, show: false }))}
       />
-        </div>
-      </div>
     </div>
   );
 }

@@ -1,17 +1,67 @@
 export interface Item {
   item_id: number;
   item_name: string;
-  model_number: string;
-  item_type: string;
-  category: string;
+  model_number?: string;
+  sku?: string | null;
+  uom: 'pc' | 'pack';
   brand: number;
-  brand_name: string;
-  brand_id: string | null;
-  quantity: number;
-  threshold_value: number;
-  availability_status: string;
+  brand_name?: string;
+  total_quantity: number;
+  active_batches_count: number;
   created_at?: string;
   updated_at?: string;
+  tier_pricing?: ItemTierPricing[];
+  // Legacy fields for backward compatibility
+  item_type?: string;
+  category?: string;
+  threshold_value?: number;
+  availability_status?: string;
+  // Deprecated - use total_quantity instead
+  quantity?: number;
+}
+
+export interface ItemBatch {
+  batch_id?: number;
+  item: number;
+  batch_number: number;
+  cost_price: number;
+  initial_quantity: number;
+  remaining_quantity: number;
+  created_at: string;
+  transaction?: number;
+  item_name?: string;
+  item_sku?: string;
+  brand_name?: string;
+  transaction_reference?: string;
+  created_at_formatted?: string;
+}
+
+// Pricing tier types
+export type PricingTier = 'SRP' | 'RD' | 'PD' | 'DD' | 'CD' | 'RS' | 'SUB-RS';
+
+export interface ItemTierPricing {
+  item: number;
+  pricing_tier: PricingTier;
+  price: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CustomerBrandPricing {
+  customer: number;
+  brand: number;
+  pricing_tier: PricingTier;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CustomerSpecialPricing {
+  customer: number;
+  item: number;
+  discount: number;
+  created_at?: string;
+  updated_at?: string;
+  created_by?: number;
 }
 
 export interface Brand {
@@ -43,6 +93,8 @@ export interface TransactionItem {
     unit_price?: number;
     total_price?: number;
     batch_number?: string;
+    batch_id?: number;
+    batch_remaining_quantity?: number;
     cost_price?: number;
     expiry_date?: string;
 }
@@ -52,7 +104,7 @@ export interface Transaction {
     brand?: number;
     brand_name?: string;
     transaction_status: 'Pending' | 'Completed' | 'Cancelled';
-    transaction_type: 'Receive Products' | 'Return goods' | 'Dispatch goods' | 'Reserve goods' | 'Manual correction' | 'Sale';
+    transaction_type: 'INCOMING' | 'OUTGOING' | 'ADJUSTMENT';
     transacted_date: string;
     created_at: string;
     due_date?: string;
@@ -66,9 +118,9 @@ export interface Transaction {
   }
 
   export interface TransactionCreate {
-    transaction_type: 'Receive goods' | 'Return goods' | 'Dispatch goods' | 'Reserve goods' | 'Manual correction' | 'Sale';
+    transaction_type: 'INCOMING' | 'OUTGOING' | 'ADJUSTMENT' | 'Receive Products (from Brands)' | 'Sell Products (to Customers)' | 'Manual correction';
     transaction_status: 'Pending' | 'Completed' | 'Cancelled';
-    reference_number: string;
+    reference_number?: string;
     brand?: number;
     customer_name?: string;
     priority_status?: 'Normal' | 'Urgent' | 'Critical';
@@ -182,9 +234,11 @@ export interface Customer {
     contact_number: string;
     tin_id?: string | null;
     customer_type: 'International' | 'Distributor' | 'Physical Store' | 'Reseller' | 'Direct Customer';
-    pricing_tier: 'RD' | 'PD' | 'DD' | 'CD' | 'RS' | 'SUB' | 'SRP';
+    platform: 'whatsapp' | 'messenger' | 'viber' | 'business_suite';
     status: 'Active' | 'Archived';
     created_at: string;
+    // Legacy field for backward compatibility
+    pricing_tier?: 'RD' | 'PD' | 'DD' | 'CD' | 'RS' | 'SUB' | 'SRP';
 }
 
 export interface CustomerSpecialPrice {

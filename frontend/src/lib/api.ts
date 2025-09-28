@@ -37,6 +37,7 @@ api.interceptors.response.use(
       try {
         const refreshToken = localStorage.getItem('refreshToken');
         if (refreshToken) {
+          console.log('Attempting token refresh...');
           const response = await fetch(`${API_BASE_URL}/token/refresh/`, {
             method: 'POST',
             headers: {
@@ -48,17 +49,31 @@ api.interceptors.response.use(
           if (response.ok) {
             const { access } = await response.json();
             localStorage.setItem('accessToken', access);
+            localStorage.setItem('lastTokenCheck', Date.now().toString());
             originalRequest.headers.Authorization = `Bearer ${access}`;
+            console.log('Token refreshed successfully');
             return api(originalRequest);
+          } else {
+            console.log('Token refresh failed with status:', response.status);
           }
+        } else {
+          console.log('No refresh token available');
         }
       } catch (refreshError) {
-        console.error('Token refresh failed:', refreshError);
+        console.error('Token refresh error:', refreshError);
       }
       
+      // Only clear tokens and redirect if we're sure the session is invalid
+      console.log('Clearing invalid session and redirecting to login');
       localStorage.removeItem('accessToken');
       localStorage.removeItem('refreshToken');
-      window.location.href = '/login';
+      localStorage.removeItem('lastTokenCheck');
+      
+      // Use React Router navigation instead of direct window redirect if possible
+      // Check if we're already on login page to prevent redirect loop
+      if (!window.location.pathname.includes('/login')) {
+        window.location.href = '/login';
+      }
     }
     
     return Promise.reject(error);
@@ -101,23 +116,6 @@ export const itemsApi = {
     }
   },
 
-  getStats: async () => {
-    try {
-      const response = await api.get('/items/stats/');
-      return {
-        status: 'success',
-        data: response.data,
-        message: ''
-      };
-    } catch (error: any) {
-      return {
-        status: 'error',
-        data: null,
-        message: error?.response?.data?.detail || error?.message || 'Failed to fetch stats'
-      };
-    }
-  },
-
   getHistory: async (id: string) => {
     try {
       const response = await api.get(`/items/${id}/history/`);
@@ -154,14 +152,7 @@ export const itemsApi = {
 
   update: async (id: string, itemData: any) => {
     try {
-      console.log('=== UPDATE ITEM DEBUG ===');
-      console.log('Item ID:', id);
-      console.log('Data being sent:', itemData);
-      console.log('Data types:', Object.entries(itemData).map(([key, value]) => `${key}: ${typeof value}`));
-      
       const response = await api.put(`/items/${id}/`, itemData);
-      
-      console.log('Update response:', response.data);
       
       return {
         status: 'success',
@@ -200,6 +191,46 @@ export const itemsApi = {
     }
   },
 
+  getStats: async () => {
+    try {
+      const response = await api.get('/dashboard/stats/');
+      // Transform the response to match the expected InventoryStats interface
+      const stats = {
+        total_items: response.data.total_items || 0,
+        low_stock: response.data.low_stock_items || 0,
+        out_of_stock: response.data.out_of_stock_items || 0
+      };
+      return {
+        status: 'success',
+        data: stats,
+        message: ''
+      };
+    } catch (error: any) {
+      return {
+        status: 'error',
+        data: null,
+        message: error?.response?.data?.detail || error?.message || 'Failed to fetch stats'
+      };
+    }
+  },
+
+  getNextBatchNumber: async (itemId: number) => {
+    try {
+      const response = await api.get(`/items/${itemId}/next-batch-number/`);
+      return {
+        status: 'success',
+        data: response.data,
+        message: ''
+      };
+    } catch (error: any) {
+      return {
+        status: 'error',
+        data: null,
+        message: error?.response?.data?.detail || error?.message || 'Failed to fetch next batch number'
+      };
+    }
+  },
+
   exportCsv: async (params: any) => {
     try {
       const response = await api.get('/items/export/', { 
@@ -220,42 +251,6 @@ export const itemsApi = {
     }
   },
 
-  getNextBatchNumber: async (itemId: number) => {
-    try {
-      const response = await api.get(`/items/${itemId}/next_batch_number/`);
-      return {
-        status: 'success',
-        data: response.data,
-        message: ''
-      };
-    } catch (error: any) {
-      return {
-        status: 'error',
-        data: null,
-        message: error?.response?.data?.detail || error?.message || 'Failed to get next batch number'
-      };
-    }
-  },
-
-  validateBatchNumber: async (itemId: number, batchNumber: string) => {
-    try {
-      const response = await api.post(`/items/${itemId}/validate_batch_number/`, {
-        batch_number: batchNumber
-      });
-      return {
-        status: 'success',
-        data: response.data,
-        message: ''
-      };
-    } catch (error: any) {
-      return {
-        status: 'error',
-        data: null,
-        message: error?.response?.data?.detail || error?.message || 'Failed to validate batch number'
-      };
-    }
-  },
-
   createPricing: async (pricingData: any) => {
     try {
       const response = await api.post('/item-pricing/', pricingData);
@@ -269,6 +264,91 @@ export const itemsApi = {
         status: 'error',
         data: null,
         message: error?.response?.data?.detail || error?.message || 'Failed to create pricing'
+      };
+    }
+  },
+
+  createTierPricing: async (pricingData: any) => {
+    try {
+      const response = await api.post('/item-tier-pricing/', pricingData);
+      return {
+        status: 'success',
+        data: response.data,
+        message: 'Tier pricing created successfully'
+      };
+    } catch (error: any) {
+      return {
+        status: 'error',
+        data: null,
+        message: error?.response?.data?.detail || error?.message || 'Failed to create tier pricing'
+      };
+    }
+  },
+
+  updateTierPricing: async (pricingId: number, pricingData: any) => {
+    try {
+      const response = await api.put(`/item-tier-pricing/${pricingId}/`, pricingData);
+      return {
+        status: 'success',
+        data: response.data,
+        message: 'Tier pricing updated successfully'
+      };
+    } catch (error: any) {
+      return {
+        status: 'error',
+        data: null,
+        message: error?.response?.data?.detail || error?.message || 'Failed to update tier pricing'
+      };
+    }
+  },
+
+  deleteTierPricing: async (pricingId: number) => {
+    try {
+      await api.delete(`/item-tier-pricing/${pricingId}/`);
+      return {
+        status: 'success',
+        data: null,
+        message: 'Tier pricing deleted successfully'
+      };
+    } catch (error: any) {
+      return {
+        status: 'error',
+        data: null,
+        message: error?.response?.data?.detail || error?.message || 'Failed to delete tier pricing'
+      };
+    }
+  },
+
+  getTierPricingForItem: async (itemId: number) => {
+    try {
+      const response = await api.get(`/item-tier-pricing/?item=${itemId}`);
+      return {
+        status: 'success',
+        data: response.data,
+        message: 'Tier pricing retrieved successfully'
+      };
+    } catch (error: any) {
+      return {
+        status: 'error',
+        data: null,
+        message: error?.response?.data?.detail || error?.message || 'Failed to get tier pricing'
+      };
+    }
+  },
+
+  getNextSku: async (brandId: number) => {
+    try {
+      const response = await api.get(`/items/next-sku/?brand_id=${brandId}`);
+      return {
+        status: 'success',
+        data: response.data,
+        message: ''
+      };
+    } catch (error: any) {
+      return {
+        status: 'error',
+        data: null,
+        message: error?.response?.data?.detail || error?.message || 'Failed to get next SKU'
       };
     }
   }
@@ -290,8 +370,7 @@ export const API_ENDPOINTS = {
   TRANSACTIONS: `${API_BASE_URL}/transactions/`,
   
   // Beauty product features
-  INVENTORY_BATCHES: `${API_BASE_URL}/inventory-batches/`,
-  CUSTOMER_SPECIAL_PRICES: `${API_BASE_URL}/customer-special-prices/`,
+  CUSTOMER_SPECIAL_PRICES: `${API_BASE_URL}/customer-special-pricing/`,
   
   // Reports and dashboard
   DASHBOARD_STATS: `${API_BASE_URL}/dashboard/stats/`,
@@ -771,7 +850,7 @@ export const customersApi = {
 export const customerSpecialPricesApi = {
   getAll: async (params?: any) => {
     try {
-      const response = await api.get('/customer-special-prices/', { params });
+      const response = await api.get('/customer-special-pricing/', { params });
       return {
         status: 'success',
         data: response.data,
@@ -788,7 +867,7 @@ export const customerSpecialPricesApi = {
 
   getByCustomerId: async (customerId: number) => {
     try {
-      const response = await api.get('/customer-special-prices/', { 
+      const response = await api.get('/customer-special-pricing/', { 
         params: { customer: customerId }
       });
       return {
@@ -807,7 +886,7 @@ export const customerSpecialPricesApi = {
 
   create: async (data: any) => {
     try {
-      const response = await api.post('/customer-special-prices/', data);
+      const response = await api.post('/customer-special-pricing/', data);
       return {
         status: 'success',
         data: response.data,
@@ -824,7 +903,7 @@ export const customerSpecialPricesApi = {
 
   approve: async (id: string) => {
     try {
-      const response = await api.post(`/customer-special-prices/${id}/approve/`);
+      const response = await api.post(`/customer-special-pricing/${id}/approve/`);
       return {
         status: 'success',
         data: response.data,
@@ -841,7 +920,7 @@ export const customerSpecialPricesApi = {
 
   reject: async (id: string) => {
     try {
-      const response = await api.post(`/customer-special-prices/${id}/reject/`);
+      const response = await api.post(`/customer-special-pricing/${id}/reject/`);
       return {
         status: 'success',
         data: response.data,
@@ -858,7 +937,7 @@ export const customerSpecialPricesApi = {
 
   delete: async (id: string) => {
     try {
-      await api.delete(`/customer-special-prices/${id}/`);
+      await api.delete(`/customer-special-pricing/${id}/`);
       return {
         status: 'success',
         data: null,
@@ -930,62 +1009,6 @@ export const pricingApi = {
   }
 };
 
-// Inventory Batch API
-export const batchApi = {
-  getAll: async (params?: any) => {
-    try {
-      const response = await api.get('/inventory-batches/', { params });
-      return {
-        status: 'success',
-        data: response.data,
-        message: ''
-      };
-    } catch (error: any) {
-      return {
-        status: 'error',
-        data: null,
-        message: error?.response?.data?.detail || error?.message || 'Failed to fetch batches'
-      };
-    }
-  },
-
-  getByItemId: async (itemId: number) => {
-    try {
-      const response = await api.get('/inventory-batches/', { 
-        params: { item: itemId }
-      });
-      return {
-        status: 'success',
-        data: response.data,
-        message: ''
-      };
-    } catch (error: any) {
-      return {
-        status: 'error',
-        data: null,
-        message: error?.response?.data?.detail || error?.message || 'Failed to fetch item batches'
-      };
-    }
-  },
-
-  create: async (data: any) => {
-    try {
-      const response = await api.post('/inventory-batches/', data);
-      return {
-        status: 'success',
-        data: response.data,
-        message: ''
-      };
-    } catch (error: any) {
-      return {
-        status: 'error',
-        data: null,
-        message: error?.response?.data?.detail || error?.message || 'Failed to create batch'
-      };
-    }
-  }
-};
-
 // Test API connectivity
 export const testConnection = async () => {
   try {
@@ -1041,7 +1064,7 @@ export const pricingLogic = {
   getPriceForCustomerAndItem: async (customerId: number, itemId: number) => {
     try {
       // First check for customer special price
-      const specialPriceResponse = await api.get('/customer-special-prices/', {
+      const specialPriceResponse = await api.get('/customer-special-pricing/', {
         params: { customer: customerId, item: itemId }
       });
       
@@ -1150,6 +1173,120 @@ export const pricingLogic = {
         deviationPercentage: 0,
         currentPrice: 0,
         reason: 'Error checking approval requirements - defaulting to approval required'
+      };
+    }
+  }
+};
+
+// Customer Brand Pricing API
+export const customerBrandPricingApi = {
+  getAll: async (params?: any) => {
+    try {
+      const response = await api.get('/customer-brand-pricing/', { params });
+      return {
+        status: 'success',
+        data: response.data,
+        message: ''
+      };
+    } catch (error: any) {
+      return {
+        status: 'error',
+        data: null,
+        message: error?.response?.data?.detail || error?.message || 'Failed to fetch customer brand pricing'
+      };
+    }
+  },
+
+  getByCustomerId: async (customerId: number) => {
+    try {
+      const response = await api.get('/customer-brand-pricing/', { 
+        params: { customer: customerId }
+      });
+      return {
+        status: 'success',
+        data: response.data,
+        message: ''
+      };
+    } catch (error: any) {
+      return {
+        status: 'error',
+        data: null,
+        message: error?.response?.data?.detail || error?.message || 'Failed to fetch customer brand pricing'
+      };
+    }
+  },
+
+  create: async (data: any) => {
+    try {
+      const response = await api.post('/customer-brand-pricing/', data);
+      return {
+        status: 'success',
+        data: response.data,
+        message: 'Brand pricing assigned successfully'
+      };
+    } catch (error: any) {
+      console.error('Customer brand pricing API error:', error?.response?.data);
+      const errorMessage = error?.response?.data?.detail || 
+                          error?.response?.data?.message || 
+                          (error?.response?.data && typeof error.response.data === 'object' 
+                            ? JSON.stringify(error.response.data) 
+                            : error?.message) || 
+                          'Failed to assign brand pricing';
+      return {
+        status: 'error',
+        data: null,
+        message: errorMessage
+      };
+    }
+  },
+
+  createBulk: async (data: any) => {
+    try {
+      const response = await api.post('/customer-brand-pricing/bulk_create/', data);
+      return {
+        status: 'success',
+        data: response.data,
+        message: 'Brand pricing assigned successfully'
+      };
+    } catch (error: any) {
+      return {
+        status: 'error',
+        data: null,
+        message: error?.response?.data?.detail || error?.message || 'Failed to assign brand pricing'
+      };
+    }
+  },
+
+  update: async (id: string, data: any) => {
+    try {
+      const response = await api.put(`/customer-brand-pricing/${id}/`, data);
+      return {
+        status: 'success',
+        data: response.data,
+        message: 'Brand pricing updated successfully'
+      };
+    } catch (error: any) {
+      return {
+        status: 'error',
+        data: null,
+        message: error?.response?.data?.detail || error?.message || 'Failed to update brand pricing'
+      };
+    }
+  },
+
+  delete: async (id: string) => {
+    try {
+      await api.delete(`/customer-brand-pricing/${id}/`);
+      return {
+        status: 'success',
+        data: null,
+        message: 'Brand pricing removed successfully'
+      };
+    } catch (error: any) {
+      return {
+        status: 'error',
+        data: null,
+        message: error?.response?.data?.detail || error?.message || 'Failed to remove brand pricing'
       };
     }
   }

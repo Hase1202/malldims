@@ -1,29 +1,19 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { itemsApi } from '../../lib/api';
 import { AlertCircle, ArrowRight } from 'lucide-react';
 import { Item } from '../../types/inventory';
-import Dropdown from "../../components/common/Dropdown";
-import SearchableDropdown from "../../components/common/SearchableDropdown";
 import { useBrands } from '../../hooks/useBrands';
 
 // Validation constants from models.py
 const MAX_ITEM_NAME_LENGTH = 100;
-const MAX_MODEL_NO_LENGTH = 50;
-const MAX_INTEGER_VALUE = 32767; // SmallIntegerField max value
 
 // Validation helper functions
 const isValidItemName = (name: string): boolean => {
     // Only allow letters, numbers, spaces, and basic punctuation
     const validNameRegex = /^[a-zA-Z0-9\s\-_.,()&]+$/;
     return validNameRegex.test(name);
-};
-
-const isValidModelNumber = (modelNo: string): boolean => {
-    // Only allow letters, numbers, spaces, hyphens, dots, parentheses, plus, and slash
-    const validModelRegex = /^[a-zA-Z0-9\s\-_.()+/\/]+$/;
-    return validModelRegex.test(modelNo);
 };
 
 interface ApiResponse {
@@ -40,36 +30,24 @@ interface EditInventoryItemProps {
     onClose: () => void;
 }
 
-const ITEM_TYPES = [
-    "Skincare Products",
-    "Makeup Products", 
-    "Hair Care Products",
-    "Fragrance Products",
-    "Body Care Products",
-    "Beauty Tools & Accessories"
-] as const;
-
-const ITEM_CATEGORIES = [
-    "Premium Brand",
-    "Drugstore Brand", 
-    "Organic/Natural",
-    "Korean Beauty",
-    "Luxury Collection",
-    "Professional Use"
-] as const;
-
 interface FormData {
     item_id?: number;
     item_name?: string;
-    model_number?: string;
-    item_type?: string;
-    category?: string;
-    threshold_value?: number;
+    sku?: string;
+    uom?: 'pc' | 'pack';
     quantity?: number;
     availability_status?: string;
     created_at?: string;
     updated_at?: string;
     brand?: number;
+    // Pricing fields for each tier
+    srpPrice?: number;
+    rdPrice?: number;
+    pdPrice?: number;
+    ddPrice?: number;
+    cdPrice?: number;
+    rsPrice?: number;
+    subRsPrice?: number;
     [key: string]: string | number | null | undefined;
 }
 
@@ -80,16 +58,23 @@ interface PaginatedResponse {
 
 export default function EditInventoryItem({ itemId, onClose }: EditInventoryItemProps) {
     const navigate = useNavigate();
-    const { brands, loading: brandsLoading } = useBrands();
+    const queryClient = useQueryClient();
+    const { brands } = useBrands();
     const [showDeleteDialog, setShowDeleteDialog] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [formData, setFormData] = useState<FormData>({
         item_name: '',
-        model_number: '',
-        item_type: '',
-        category: '',
-        threshold_value: undefined,
-        availability_status: 'In Stock'
+        sku: '',
+        uom: 'pc',
+        availability_status: 'In Stock',
+        // Initialize pricing fields
+        srpPrice: 0,
+        rdPrice: 0,
+        pdPrice: 0,
+        ddPrice: 0,
+        cdPrice: 0,
+        rsPrice: 0,
+        subRsPrice: 0,
     });
     const [isVisible, setIsVisible] = useState(false);
     const [loadingUI, setLoadingUI] = useState(true); // Force loading UI initially
@@ -119,14 +104,59 @@ export default function EditInventoryItem({ itemId, onClose }: EditInventoryItem
             
             const itemData = response.data as Item;
             // Always set brand as a number, fallback to brand if brand_id is missing
-            const brandId = itemData.brand_id ? Number(itemData.brand_id) : (itemData.brand ? Number(itemData.brand) : undefined);
+            const brandId = itemData.brand ? Number(itemData.brand) : undefined;
             if (!brandId) {
                 console.warn('Brand ID missing from fetched itemData:', itemData);
             }
+            
+            // Initialize form data with basic item info
             const formDataWithBrand = {
-                ...itemData,
-                brand: brandId
+                item_id: itemData.item_id,
+                item_name: itemData.item_name,
+                sku: itemData.sku || '',
+                uom: itemData.uom || 'pc',
+                quantity: itemData.quantity,
+                brand: brandId,
+                availability_status: 'In Stock',
+                // Initialize pricing fields
+                srpPrice: 0,
+                rdPrice: 0,
+                pdPrice: 0,
+                ddPrice: 0,
+                cdPrice: 0,
+                rsPrice: 0,
+                subRsPrice: 0,
             };
+            
+            // If the item has tier_pricing, populate the pricing fields
+            if (itemData.tier_pricing && Array.isArray(itemData.tier_pricing)) {
+                itemData.tier_pricing.forEach((pricing: any) => {
+                    switch (pricing.pricing_tier) {
+                        case 'SRP':
+                            formDataWithBrand.srpPrice = pricing.price;
+                            break;
+                        case 'RD':
+                            formDataWithBrand.rdPrice = pricing.price;
+                            break;
+                        case 'PD':
+                            formDataWithBrand.pdPrice = pricing.price;
+                            break;
+                        case 'DD':
+                            formDataWithBrand.ddPrice = pricing.price;
+                            break;
+                        case 'CD':
+                            formDataWithBrand.cdPrice = pricing.price;
+                            break;
+                        case 'RS':
+                            formDataWithBrand.rsPrice = pricing.price;
+                            break;
+                        case 'SUB-RS':
+                            formDataWithBrand.subRsPrice = pricing.price;
+                            break;
+                    }
+                });
+            }
+            
             setFormData(formDataWithBrand);
             setOriginalData(formDataWithBrand);
             setLoadingUI(false);
@@ -139,11 +169,14 @@ export default function EditInventoryItem({ itemId, onClose }: EditInventoryItem
     const checkForChanges = (currentData: Partial<Item>) => {
         const relevantFields = [
             'item_name',
-            'model_number',
-            'item_type',
-            'category',
-            'threshold_value',
-            'brand'
+            'uom',
+            'srpPrice',
+            'rdPrice', 
+            'pdPrice',
+            'ddPrice',
+            'cdPrice',
+            'rsPrice',
+            'subRsPrice'
         ];
 
         return relevantFields.some(field => {
@@ -163,8 +196,7 @@ export default function EditInventoryItem({ itemId, onClose }: EditInventoryItem
             // Only check for duplicates if any of these fields changed
             if (
                 newData.item_name !== originalData.item_name ||
-                newData.model_number !== originalData.model_number ||
-                newData.brand !== originalData.brand
+                newData.uom !== originalData.uom
             ) {
                 const response = await itemsApi.getAll(new URLSearchParams({ all: 'true' }));
                 if (response.status === 'success' && response.data) {
@@ -173,8 +205,8 @@ export default function EditInventoryItem({ itemId, onClose }: EditInventoryItem
                     const duplicate = items.find((item: Item) => 
                         item.item_id !== Number(itemId) && // Exclude current item
                         item.item_name === newData.item_name &&
-                        item.model_number === newData.model_number &&
-                        Number(item.brand) === Number(newData.brand)
+                        item.uom === newData.uom &&
+                        Number(item.brand) === Number(originalData.brand)  // Use original brand for comparison
                     );
 
                     if (duplicate) {
@@ -201,7 +233,7 @@ export default function EditInventoryItem({ itemId, onClose }: EditInventoryItem
         }, 500); // Debounce the check
 
         return () => clearTimeout(timer);
-    }, [formData.item_name, formData.model_number, formData.brand]);
+    }, [formData.item_name, formData.uom]); // Only check when name or UOM changes
 
     // Function to check if form has any errors
     const hasErrors = (): boolean => {
@@ -212,15 +244,22 @@ export default function EditInventoryItem({ itemId, onClose }: EditInventoryItem
     const isFormValid = (): boolean => {
         return (
             formData.item_name?.trim() !== '' &&
-            formData.model_number?.trim() !== '' &&
-            formData.item_type !== '' &&
-            formData.category !== '' &&
-            formData.threshold_value !== undefined &&
-            formData.threshold_value !== null &&
             !hasErrors() &&
             hasChanges &&
             !isDuplicateChecking
         );
+    };
+
+    // Handle pricing field changes
+    const handlePricingChange = (key: string, value: string) => {
+        const numericValue = value === '' ? 0 : parseFloat(value) || 0;
+        const newFormData = { 
+            ...formData, 
+            [key]: numericValue 
+        };
+        setFormData(newFormData);
+        const newHasChanges = checkForChanges(newFormData);
+        setHasChanges(newHasChanges);
     };
 
     // Update handleInputChange to include duplicate checking
@@ -228,16 +267,14 @@ export default function EditInventoryItem({ itemId, onClose }: EditInventoryItem
         const { name, value } = e.target;
         let newFormData = { ...formData };
         
-        // Always preserve brand
+        // Always preserve brand since it's read-only
         if (typeof formData.brand !== 'undefined') {
             newFormData.brand = formData.brand;
         }
 
-        // Handle numeric fields
+        // Handle all other fields normally
         if (name === 'threshold_value') {
             newFormData[name] = value === '' ? undefined : Number(value);
-        } else if (name === 'brand') {
-            newFormData[name] = value;
         } else {
             newFormData[name] = value;
         }
@@ -255,42 +292,6 @@ export default function EditInventoryItem({ itemId, onClose }: EditInventoryItem
             }
         }
 
-        if (name === 'model_number') {
-            if (!value.trim()) {
-                setFormErrors(prev => ({ ...prev, model_number: 'Model number is required' }));
-            } else if (value.length > MAX_MODEL_NO_LENGTH) {
-                setFormErrors(prev => ({ ...prev, model_number: 'Model No. exceeds the character limit' }));
-            } else if (!isValidModelNumber(value)) {
-                setFormErrors(prev => ({ ...prev, model_number: 'Invalid characters in model number' }));
-            } else {
-                setFormErrors(prev => ({ ...prev, model_number: undefined }));
-            }
-        }
-
-        if (name === 'item_type') {
-            if (!value) {
-                setFormErrors(prev => ({ ...prev, item_type: 'Type is required' }));
-            } else {
-                setFormErrors(prev => ({ ...prev, item_type: undefined }));
-            }
-        }
-
-        if (name === 'category') {
-            if (!value) {
-                setFormErrors(prev => ({ ...prev, category: 'Category is required' }));
-            } else {
-                setFormErrors(prev => ({ ...prev, category: undefined }));
-            }
-        }
-
-        if (name === 'brand') {
-            if (!value) {
-                setFormErrors(prev => ({ ...prev, brand: 'Brand is required' }));
-            } else {
-                setFormErrors(prev => ({ ...prev, brand: undefined }));
-            }
-        }
-
         setFormData(newFormData);
         const newHasChanges = checkForChanges(newFormData);
         setHasChanges(newHasChanges);
@@ -303,74 +304,122 @@ export default function EditInventoryItem({ itemId, onClose }: EditInventoryItem
         setIsSaving(true);
         setError(null);
 
-        // Check if form is valid
-        if (!isFormValid()) {
-            setError('Please fill in all required fields correctly.');
-            setIsSaving(false);
-            return;
+    if (!isFormValid()) {
+        setError('Please fill in all required fields correctly.');
+        setIsSaving(false);
+        return;
+    }
+
+    try {
+        const updatePayload = {
+            item_name: formData.item_name,
+            uom: formData.uom,
+        };
+
+        const response = await itemsApi.update(itemId, updatePayload);
+        if (response.status === 'error' || !response.data) {
+            throw new Error(response.message || 'Failed to update item');
         }
 
-        try {
-            // Map frontend field names to backend field names
-            const updatePayload = {
-                item_name: formData.item_name,
-                model_number: formData.model_number,
-                item_type: formData.item_type,
-                category: formData.category,
-                threshold_value: Number(formData.threshold_value),
-                brand: Number(formData.brand)
-            };
+        const tierPricingPromises = [];
+        const currentTierPricingResponse = await itemsApi.getTierPricingForItem(Number(itemId));
 
-            console.log('Sending payload to backend:', updatePayload);
-            
-            const response = await itemsApi.update(itemId, updatePayload);
-            
-            if (response.status === 'error' || !response.data) {
-                throw new Error(response.message || 'Failed to update item');
+        let currentTierPricingData = [];
+        if (currentTierPricingResponse.status === 'success') {
+            if (Array.isArray(currentTierPricingResponse.data)) {
+                currentTierPricingData = currentTierPricingResponse.data;
+            } else if (currentTierPricingResponse.data && currentTierPricingResponse.data.results) {
+                currentTierPricingData = currentTierPricingResponse.data.results;
             }
-            
-            window.location.reload();
-        } catch (error: any) {
-            console.error('API call error:', error);
-            console.error('Error response data:', error?.response?.data);
-            
-            // Extract detailed error message from the response
-            let errorMessage = 'Failed to update item';
-            
-            if (error?.response?.data) {
-                const errorData = error.response.data;
-                
-                // Handle field-specific errors
-                if (typeof errorData === 'object') {
-                    const fieldErrors = [];
-                    
-                    // Check for field-specific errors
-                    for (const [field, messages] of Object.entries(errorData)) {
-                        if (Array.isArray(messages)) {
-                            fieldErrors.push(`${field}: ${messages.join(', ')}`);
-                        } else if (typeof messages === 'string') {
-                            fieldErrors.push(`${field}: ${messages}`);
-                        }
+        }
+
+        const currentPricingMap = new Map();
+        currentTierPricingData.forEach((pricing: any) => {
+            currentPricingMap.set(pricing.pricing_tier, pricing);
+        });
+
+        const pricingTiers = [
+            { tier: 'SRP', formField: 'srpPrice' },
+            { tier: 'RD', formField: 'rdPrice' },
+            { tier: 'PD', formField: 'pdPrice' },
+            { tier: 'DD', formField: 'ddPrice' },
+            { tier: 'CD', formField: 'cdPrice' },
+            { tier: 'RS', formField: 'rsPrice' },
+            { tier: 'SUB-RS', formField: 'subRsPrice' }
+        ];
+
+        for (const { tier, formField } of pricingTiers) {
+            const newPrice = formData[formField as keyof FormData] as number || 0;
+            const currentPricing = currentPricingMap.get(tier);
+
+            if (currentPricing) {
+                if (newPrice > 0) {
+                    if (currentPricing.price !== newPrice) {
+                        tierPricingPromises.push(
+                            itemsApi.updateTierPricing(currentPricing.id, {
+                                item: Number(itemId),
+                                pricing_tier: tier,
+                                price: newPrice
+                            })
+                        );
                     }
-                    
-                    if (fieldErrors.length > 0) {
-                        errorMessage = fieldErrors.join('; ');
-                    } else if (errorData.detail) {
-                        errorMessage = errorData.detail;
-                    } else if (errorData.message) {
-                        errorMessage = errorData.message;
-                    }
-                } else if (typeof errorData === 'string') {
-                    errorMessage = errorData;
+                } else {
+                    tierPricingPromises.push(itemsApi.deleteTierPricing(currentPricing.id));
                 }
-            } else if (error?.message) {
-                errorMessage = error.message;
+            } else {
+                if (newPrice > 0) {
+                    tierPricingPromises.push(
+                        itemsApi.createTierPricing({
+                            item: Number(itemId),
+                            pricing_tier: tier,
+                            price: newPrice
+                        })
+                    );
+                }
             }
-            
-            setError(errorMessage);
-            setIsSaving(false);
         }
-    };
+
+        if (tierPricingPromises.length > 0) {
+            const pricingResults = await Promise.all(tierPricingPromises);
+            const failedPricing = pricingResults.filter(result => result.status === 'error');
+            if (failedPricing.length > 0) {
+                console.warn('Some pricing updates failed:', failedPricing);
+            }
+        }
+
+        await queryClient.invalidateQueries({ queryKey: ['item', itemId] });
+        await queryClient.invalidateQueries({ queryKey: ['items'] });
+        handleClose();
+    } catch (error: any) {
+        console.error('API call error:', error);
+        let errorMessage = 'Failed to update item';
+        if (error?.response?.data) {
+            const errorData = error.response.data;
+            if (typeof errorData === 'object') {
+                const fieldErrors = Object.entries(errorData).map(([field, messages]) => {
+                    if (Array.isArray(messages)) {
+                        return `${field}: ${messages.join(', ')}`;
+                    }
+                    return `${field}: ${messages}`;
+                });
+                if (fieldErrors.length > 0) {
+                    errorMessage = fieldErrors.join('; ');
+                } else if (errorData.detail) {
+                    errorMessage = errorData.detail;
+                } else if (errorData.message) {
+                    errorMessage = errorData.message;
+                }
+            } else if (typeof errorData === 'string') {
+                errorMessage = errorData;
+            }
+        } else if (error?.message) {
+            errorMessage = error.message;
+        }
+        setError(errorMessage);
+    } finally {
+        setIsSaving(false);
+    }
+};
     
 
     const handleDelete = async () => {
@@ -391,10 +440,15 @@ export default function EditInventoryItem({ itemId, onClose }: EditInventoryItem
                 return;
             }
             
-            // Navigate back to inventory with deletion success state
-            navigate('/inventory', {
-                state: { showDeleteSuccess: true }
-            });
+            // Invalidate cache to refresh the inventory list
+            await queryClient.invalidateQueries({ queryKey: ['items'] });
+            
+            // Reset states
+            setIsDeleting(false);
+            setShowDeleteDialog(false);
+            
+            // Navigate back to inventory
+            navigate('/inventory');
         } catch (error: any) {
             console.error('Delete error:', error);
             const errorMessage = error?.response?.data?.message || 
@@ -568,152 +622,93 @@ export default function EditInventoryItem({ itemId, onClose }: EditInventoryItem
                                 </div>
 
                                 <div>
-                                    <label className="block text-sm mb-2">Model No.</label>
+                                    <label className="block text-sm mb-2">SKU</label>
                                     <input
                                         type="text"
-                                        name="model_number"
-                                        value={formData.model_number || ''}
-                                        onChange={handleInputChange}
-                                        className={`w-full p-2.5 border-[1.5px] ${
-                                            formErrors.model_number ? 'border-[#D3465C]' : 'border-[#D5D7DA]'
-                                        } rounded-lg`}
-                                        maxLength={MAX_MODEL_NO_LENGTH}
-                                        placeholder="Enter model number..."
+                                        name="sku"
+                                        value={formData.sku || ''}
+                                        disabled
+                                        className="w-full p-2.5 border-[1.5px] border-[#D5D7DA] rounded-lg bg-gray-50 text-gray-500 cursor-not-allowed"
+                                        placeholder="Auto-generated"
                                     />
-                                    {formErrors.model_number && (
-                                        <div className="flex items-center gap-1 text-[#D3465C] text-sm mt-1">
-                                            <AlertCircle className="h-4 w-4" />
-                                            <span>{formErrors.model_number}</span>
-                                        </div>
-                                    )}
                                 </div>
 
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-sm mb-2">Type</label>
-                                        <Dropdown
-                                            options={ITEM_TYPES.map(type => ({
-                                                value: type,
-                                                label: type
-                                            }))}
-                                            value={formData.item_type || ''}
-                                            onChange={(value) => handleInputChange({
-                                                target: { name: 'item_type', value }
-                                            } as React.ChangeEvent<HTMLSelectElement>)}
-                                            placeholder="Select..."
-                                            error={!!formErrors.item_type}
-                                        />
-                                        {formErrors.item_type && (
-                                            <div className="flex items-center gap-1 text-[#D3465C] text-sm mt-1">
-                                                <AlertCircle className="h-4 w-4" />
-                                                <span>{formErrors.item_type}</span>
-                                            </div>
-                                        )}
-                                    </div>
-
-                                    <div>
-                                        <label className="block text-sm mb-2">Category</label>
-                                        <Dropdown
-                                            options={ITEM_CATEGORIES.map(category => ({
-                                                value: category,
-                                                label: category
-                                            }))}
-                                            value={formData.category || ''}
-                                            onChange={(value) => handleInputChange({
-                                                target: { name: 'category', value }
-                                            } as React.ChangeEvent<HTMLSelectElement>)}
-                                            placeholder="Select..."
-                                            error={!!formErrors.category}
-                                        />
-                                        {formErrors.category && (
-                                            <div className="flex items-center gap-1 text-[#D3465C] text-sm mt-1">
-                                                <AlertCircle className="h-4 w-4" />
-                                                <span>{formErrors.category}</span>
-                                            </div>
-                                        )}
-                                    </div>
+                                <div>
+                                    <label className="block text-sm mb-2">Quantity</label>
+                                    <input
+                                        type="number"
+                                        value={formData.quantity || ''}
+                                        disabled
+                                        className="w-full p-2.5 border-[1.5px] border-[#D5D7DA] rounded-lg bg-gray-50 text-gray-500 cursor-not-allowed"
+                                    />
                                 </div>
 
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-sm mb-2">Quantity</label>
-                                        <input
-                                            type="number"
-                                            value={formData.quantity || ''}
-                                            disabled
-                                            className="w-full p-2.5 border-[1.5px] border-[#D5D7DA] rounded-lg bg-gray-50 text-gray-500 cursor-not-allowed"
-                                        />
-                                    </div>
-
-                                    <div>
-                                        <label className="block text-sm mb-2">Threshold Value</label>
-                                        <input
-                                            type="number"
-                                            name="threshold_value"
-                                            value={formData.threshold_value ?? ''}
-                                            onChange={(e) => {
-                                                const value = e.target.value;
-                                                let val = value === '' ? NaN : Number(value);
-                                                
-                                                // Update form data
-                                                handleInputChange({
-                                                    target: { name: 'threshold_value', value }
-                                                } as React.ChangeEvent<HTMLInputElement>);
-                                                
-                                                // Validate in real-time - matching quantity validation exactly
-                                                if (value === '') {
-                                                    setFormErrors(prev => ({ ...prev, threshold_value: 'Threshold value is required' }));
-                                                } else if (value && !Number.isInteger(val)) {
-                                                    setFormErrors(prev => ({ ...prev, threshold_value: 'Decimal values are not allowed' }));
-                                                } else if (isNaN(val)) {
-                                                    setFormErrors(prev => ({ ...prev, threshold_value: 'Threshold value is required' }));
-                                                } else if (val <= 0) {
-                                                    setFormErrors(prev => ({ ...prev, threshold_value: 'Threshold value must be greater than 0' }));
-                                                } else if (val > MAX_INTEGER_VALUE) {
-                                                    setFormErrors(prev => ({ ...prev, threshold_value: 'Value should be less than or equal to 32767' }));
-                                                } else if (val === 0 && formData.item_type !== 'Finished Goods') {
-                                                    setFormErrors(prev => ({ ...prev, threshold_value: 'Threshold value must be greater than zero' }));
-                                                } else {
-                                                    setFormErrors(prev => ({ ...prev, threshold_value: undefined }));
-                                                }
-                                            }}
-                                            className={`w-full p-2.5 border-[1.5px] ${
-                                                formErrors.threshold_value ? 'border-[#D3465C]' : 'border-[#D5D7DA]'
-                                            } rounded-lg`}
-                                            min="0"
-                                            max={MAX_INTEGER_VALUE}
-                                            placeholder="Enter threshold value..."
-                                        />
-                                        {formErrors.threshold_value && (
-                                            <div className="flex items-center gap-1 text-[#D3465C] text-sm mt-1">
-                                                <AlertCircle className="h-4 w-4" />
-                                                <span>{formErrors.threshold_value}</span>
-                                            </div>
-                                        )}
-                                    </div>
+                                <div>
+                                    <label className="block text-sm mb-2">Unit of Measure (UoM)</label>
+                                    <select
+                                        name="uom"
+                                        value={formData.uom || 'pc'}
+                                        onChange={handleInputChange}
+                                        className="w-full p-2.5 border-[1.5px] border-[#D5D7DA] rounded-lg focus:outline-none focus:border-[#0504AA]"
+                                    >
+                                        <option value="pc">Piece (pc)</option>
+                                        <option value="pack">Pack</option>
+                                    </select>
                                 </div>
 
                                 <div>
                                     <label className="block text-sm mb-2">Brand</label>
-                                    <SearchableDropdown
-                                        options={brands.map(brand => ({
-                                            value: brand.brand_id,
-                                            label: brand.brand_name,
-                                            modelNumber: brand.contact_person || undefined
-                                        }))}
-                                        value={formData.brand || 0}
-                                        onChange={(value) => handleInputChange({ target: { name: 'brand', value } })}
-                                        placeholder="Select a brand"
-                                        searchPlaceholder="Search for brand name..."                                        error={!!formErrors.brand}
-                                        noResultsText="No brands found"
-                                        isLoading={brandsLoading}
+                                    <input
+                                        type="text"
+                                        value={(() => {
+                                            const currentBrand = brands.find(b => b.brand_id === formData.brand);
+                                            return currentBrand ? currentBrand.brand_name : 'Loading...';
+                                        })()}
+                                        disabled
+                                        className="w-full p-2.5 border-[1.5px] border-[#D5D7DA] rounded-lg bg-gray-50 text-gray-500 cursor-not-allowed"
                                     />
-                                    {formErrors.brand && (
-                                        <div className="flex items-center gap-1 text-[#D3465C] text-sm mt-1">
-                                            <AlertCircle className="h-4 w-4" />
-                                            <span>{formErrors.brand}</span>
-                                        </div>
-                                    )}
+                                </div>
+
+                                {/* Tier Pricing Section */}
+                                <div>
+                                    <h3 className="text-lg font-medium text-gray-900 mb-4">Tier Pricing</h3>
+                                    <p className="text-sm text-gray-600 mb-4">
+                                        Set prices for each distribution tier. Prices should generally increase from distributor to retail levels.
+                                    </p>
+                                    
+                                    <div className="space-y-4">
+                                        {[
+                                            { key: 'rdPrice', label: 'Regional Distributor (RD)', tier: 'RD' },
+                                            { key: 'pdPrice', label: 'Provincial Distributor (PD)', tier: 'PD' },
+                                            { key: 'ddPrice', label: 'District Distributor (DD)', tier: 'DD' },
+                                            { key: 'cdPrice', label: 'City Distributor (CD)', tier: 'CD' },
+                                            { key: 'rsPrice', label: 'Reseller (RS)', tier: 'RS' },
+                                            { key: 'subRsPrice', label: 'Sub-Reseller (SUB-RS)', tier: 'SUB-RS' },
+                                            { key: 'srpPrice', label: 'Suggested Retail Price (SRP)', tier: 'SRP' },
+                                        ].map(({ key, label }) => (
+                                            <div key={key} className="flex items-center gap-4">
+                                                <div className="w-48">
+                                                    <label className="block text-sm font-medium text-gray-700">
+                                                        {label}
+                                                    </label>
+                                                </div>
+                                                <div className="flex-1">
+                                                    <div className="relative">
+                                                        <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">₱</span>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            step="0.01"
+                                                            value={formData[key as keyof FormData] || ''}
+                                                            onChange={(e) => handlePricingChange(key, e.target.value)}
+                                                            className="w-full pl-8 pr-3 py-2 border-[1.5px] border-[#D5D7DA] rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                                            placeholder="0.00"
+                                                        />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
 
                                 <div className="pt-8 space-y-2.5">

@@ -33,6 +33,7 @@ export default function TransactionDetailsModal({ isOpen, onClose, transactionId
     current_stock: number;
     requested_quantity: number;
   }>>([]);
+  const [itemCurrentStocks, setItemCurrentStocks] = useState<Record<number, number>>({});
   const { user } = useAuthContext();
 
   useEffect(() => {
@@ -44,6 +45,41 @@ export default function TransactionDetailsModal({ isOpen, onClose, transactionId
       setToastMessage('');
     }
   }, [isOpen, transactionId]);
+
+  // Add new effect to fetch current stock for all items
+  useEffect(() => {
+    const fetchItemStocks = async () => {
+      if (!transaction?.items) return;
+      
+      const stockPromises = transaction.items.map(async (item) => {
+        const itemId = 'item_id' in item ? item.item_id : ('item' in item && typeof item.item === 'number' ? item.item : null);
+        if (typeof itemId !== 'number') return { itemId: null, stock: 0 };
+        
+        try {
+          const response = await itemsApi.getById(itemId.toString());
+          if (response.status === 'success' && response.data) {
+            return { itemId, stock: response.data.total_quantity || 0 };
+          }
+        } catch (error) {
+          console.error('Error fetching item stock:', error);
+        }
+        return { itemId, stock: 0 };
+      });
+      
+      const stockResults = await Promise.all(stockPromises);
+      const stockMap: Record<number, number> = {};
+      stockResults.forEach(result => {
+        if (result.itemId !== null) {
+          stockMap[result.itemId] = result.stock;
+        }
+      });
+      setItemCurrentStocks(stockMap);
+    };
+    
+    if (transaction?.items) {
+      fetchItemStocks();
+    }
+  }, [transaction]);
 
   // Add new effect to check stock when transaction data is loaded
   useEffect(() => {
@@ -176,7 +212,7 @@ export default function TransactionDetailsModal({ isOpen, onClose, transactionId
       
       const response = await itemsApi.getById(itemId.toString());
       if (response.status === 'success' && response.data) {
-        const currentStock = response.data.quantity;
+        const currentStock = response.data.total_quantity || 0;
         if (currentStock < Math.abs(item.quantity_change)) {
           insufficientItems.push({
             item_id: itemId,
@@ -350,6 +386,11 @@ export default function TransactionDetailsModal({ isOpen, onClose, transactionId
   };
 
   const getStatusText = (status: string, priorityStatus?: string, dueDate?: string) => {
+    // Add null check for status
+    if (!status) {
+        return 'Unknown';
+    }
+    
     if (status.toLowerCase() === 'pending') {
         // Check if overdue
         if (dueDate) {
@@ -366,6 +407,11 @@ export default function TransactionDetailsModal({ isOpen, onClose, transactionId
   };
 
   const getStatusColor = (status: string, priorityStatus?: string, dueDate?: string) => {
+    // Add null check for status
+    if (!status) {
+        return 'bg-gray-50 text-gray-600 px-2.5 py-1 rounded-full text-xs font-medium';
+    }
+    
     if (status.toLowerCase() === 'pending') {
         // Check if overdue
         if (dueDate) {
@@ -505,8 +551,8 @@ export default function TransactionDetailsModal({ isOpen, onClose, transactionId
                 <div className="grid grid-cols-2 gap-4">
                   <div className="bg-[#FCFBFC] rounded-lg p-4 border border-[#EBEAEA]">
                     <div className="text-sm text-[#646464] mb-1.5">Status</div>
-                    <span className={getStatusColor(transaction.transaction_status, transaction.priority_status, transaction.due_date)}>
-                      {getStatusText(transaction.transaction_status, transaction.priority_status, transaction.due_date)}
+                    <span className={getStatusColor(transaction.transaction_status || '', transaction.priority_status, transaction.due_date)}>
+                      {getStatusText(transaction.transaction_status || '', transaction.priority_status, transaction.due_date)}
                     </span>
                   </div>
                   <div className="bg-[#FCFBFC] rounded-lg p-4 border border-[#EBEAEA]">
@@ -575,19 +621,24 @@ export default function TransactionDetailsModal({ isOpen, onClose, transactionId
                       >
                         <div>
                           <div className="font-medium text-[#2C2C2C] mb-1">{item.item_name}</div>
-                          <div className="text-sm text-[#646464]">Current Stock: {item.current_stock ?? 0}</div>
+                          <div className="text-sm text-[#646464]">
+                            Current Stock: {(() => {
+                              const itemId = 'item_id' in item ? item.item_id : ('item' in item && typeof item.item === 'number' ? item.item : null);
+                              return itemId && typeof itemId === 'number' ? (itemCurrentStocks[itemId] ?? 0) : 0;
+                            })()}
+                          </div>
                         </div>
                         <div className="flex items-center gap-2">
                           <div className={`text-sm font-medium ${
-                            transaction.transaction_type === 'Manual correction' 
+                            transaction.transaction_type === 'ADJUSTMENT' 
                               ? item.quantity_change > 0 ? 'text-[#027A48]' : 'text-[#B42318]'
-                              : ['Receive Products', 'Receive goods', 'Return goods'].includes(transaction.transaction_type)
+                              : ['INCOMING'].includes(transaction.transaction_type)
                                 ? 'text-[#027A48]' 
                                 : 'text-[#B42318]'
                           }`}>
-                            {transaction.transaction_type === 'Manual correction' 
+                            {transaction.transaction_type === 'ADJUSTMENT' 
                               ? (item.quantity_change > 0 ? '+' : '') + item.quantity_change
-                              : (['Receive Products', 'Receive goods', 'Return goods'].includes(transaction.transaction_type)) 
+                              : (['INCOMING'].includes(transaction.transaction_type)) 
                                 ? '+' + Math.abs(item.quantity_change)
                                 : '-' + Math.abs(item.quantity_change)
                             }
@@ -607,14 +658,14 @@ export default function TransactionDetailsModal({ isOpen, onClose, transactionId
                   </div>
                   
                   <div className="grid grid-cols-2 gap-x-4 ml-7">
-                    {transaction.transaction_type !== 'Manual correction' && (
+                    {transaction.transaction_type !== 'ADJUSTMENT' && (
                       <div>
                         <div className="text-sm text-[#646464] mb-1.5">Customer/Brand</div>
                         <div className="text-sm text-[#2C2C2C]">{transaction.customer_name || transaction.brand_name || '-'}</div>
                       </div>
                     )}
                     
-                    <div className={transaction.transaction_type === 'Manual correction' ? 'col-span-2' : ''}>
+                    <div className={transaction.transaction_type === 'ADJUSTMENT' ? 'col-span-2' : ''}>
                       <div className="text-sm text-[#646464] mb-1.5">Processed By</div>
                       <div className="text-sm text-[#2C2C2C]">{getUserFullName(transaction.created_by)}</div>
                     </div>

@@ -21,6 +21,20 @@ interface TransactionItem {
   expiry_date?: string;
   // Validation error for batch number
   batch_error?: string;
+  // Fields for outgoing transactions (batch selection)
+  batch_id?: number;
+  available_batches?: Array<{
+    batch_id: number;
+    batch_number: number;
+    remaining_quantity: number;
+    cost_price: number;
+  }>;
+  selected_batch?: {
+    batch_id: number;
+    batch_number: number;
+    remaining_quantity: number;
+    cost_price: number;
+  };
 }
 
 // Add constant for max value
@@ -47,6 +61,7 @@ export default function AddTransactionModal({ isOpen, onClose, onSuccess }: AddT
   const [transactionType, setTransactionType] = useState<TransactionType>('Receive Products (from Brands)');
   const [dueDate, setDueDate] = useState<string>('');
   const [referenceNumber, setReferenceNumber] = useState<string>('');
+  const [previewReferenceNumber, setPreviewReferenceNumber] = useState<string>('');
   const [selectedItems, setSelectedItems] = useState<TransactionItem[]>([{ 
     item: 0, 
     quantity_change: 1, 
@@ -65,7 +80,16 @@ export default function AddTransactionModal({ isOpen, onClose, onSuccess }: AddT
   // Helper function to determine if selected transaction type is stock out
   const isStockOut = useCallback((type: TransactionType): boolean => {
     return ['Sell Products (to Customers)'].includes(type);
-  }, []);  // Function to generate sequential batch numbers for a specific item
+  }, []);  // Generate preview reference number
+  const generatePreviewReferenceNumber = useCallback(() => {
+    const currentYear = new Date().getFullYear();
+    return `${currentYear}-XXXX`;
+  }, []);
+
+  useEffect(() => {
+    // Generate preview reference number when component mounts
+    setPreviewReferenceNumber(generatePreviewReferenceNumber());
+  }, [generatePreviewReferenceNumber]);
   const generateBatchNumber = useCallback(async (itemId: number): Promise<string> => {
     if (!itemId || itemId === 0) {
       return 'B-001'; // Default for no item selected
@@ -83,13 +107,13 @@ export default function AddTransactionModal({ isOpen, onClose, onSuccess }: AddT
     // Fallback to simple increment logic if API fails
     const itemsToCheck = selectedItems.filter(item => item.item === itemId);
     const existingBatches = itemsToCheck.filter(item => 
-      item.batch_number && item.batch_number.startsWith('B-')
+      item.batch_number && String(item.batch_number).startsWith('B-')
     );
     
     let maxSequence = 0;
     existingBatches.forEach(item => {
       if (item.batch_number) {
-        const sequenceMatch = item.batch_number.match(/B-(\d{3})$/);
+        const sequenceMatch = String(item.batch_number).match(/B-(\d{3})$/);
         if (sequenceMatch) {
           const sequenceNum = parseInt(sequenceMatch[1], 10);
           maxSequence = Math.max(maxSequence, sequenceNum);
@@ -161,12 +185,9 @@ export default function AddTransactionModal({ isOpen, onClose, onSuccess }: AddT
     if (user && isSales(user) && transactionType !== 'Sell Products (to Customers)') {
       setTransactionType('Sell Products (to Customers)');
     }
-  }, [user, transactionType]);  useEffect(() => {
-    // Auto-generate a reference number
-    const year = new Date().getFullYear();
-    const randomId = Math.floor(1000 + Math.random() * 9000);
-    setReferenceNumber(`${year}-${randomId}`);
-    
+  }, [user, transactionType]);
+
+  useEffect(() => {
     // Set due date to 3 weeks from now by default (only for sell transactions)
     if (transactionType === 'Sell Products (to Customers)') {
       const threWeeksFromNow = new Date();
@@ -338,6 +359,27 @@ export default function AddTransactionModal({ isOpen, onClose, onSuccess }: AddT
       });
     }
     
+    // Fetch available batches for outgoing transactions when item is selected
+    if (isStockOut(transactionType) && itemId !== 0) {
+      fetch(`/api/inventory-batches/?item_id=${itemId}&active_only=true`)
+        .then(response => response.json())
+        .then(data => {
+          const updatedItems = [...selectedItems];
+          if (updatedItems[index] && updatedItems[index].item === itemId) {
+            updatedItems[index].available_batches = data.results || data;
+            // Auto-select the first batch if available
+            if (updatedItems[index].available_batches && updatedItems[index].available_batches.length > 0) {
+              updatedItems[index].selected_batch = updatedItems[index].available_batches[0];
+              updatedItems[index].batch_id = updatedItems[index].available_batches[0].batch_id;
+            }
+            setSelectedItems(updatedItems);
+          }
+        })
+        .catch(error => {
+          console.error('Error fetching batches:', error);
+        });
+    }
+    
     // Set the items immediately (without waiting for batch number)
     setSelectedItems(newItems);
     setError(null); // Clear any previous errors
@@ -378,6 +420,15 @@ export default function AddTransactionModal({ isOpen, onClose, onSuccess }: AddT
       newItems[index].error = `Quantity cannot exceed ${MAX_QUANTITY}`;
       setSelectedItems(newItems);
       return;
+    }
+    
+    // Check if it exceeds available batch quantity for outgoing transactions
+    if (isStockOut(transactionType) && newItems[index].selected_batch) {
+      if (numValue > newItems[index].selected_batch!.remaining_quantity) {
+        newItems[index].error = `Quantity cannot exceed available batch quantity (${newItems[index].selected_batch!.remaining_quantity})`;
+        setSelectedItems(newItems);
+        return;
+      }
     }
 
     // For "Receive Products", quantities are positive (stock in)
@@ -474,7 +525,7 @@ export default function AddTransactionModal({ isOpen, onClose, onSuccess }: AddT
       isValid = false;
     }    // Batch validation for receive transactions
     if (transactionType === 'Receive Products (from Brands)') {
-      const itemsWithoutBatchNumber = validItems.filter(item => !item.batch_number?.trim());
+      const itemsWithoutBatchNumber = validItems.filter(item => !item.batch_number || !String(item.batch_number).trim());
       if (itemsWithoutBatchNumber.length > 0) {
         setError('Batch number is required for all items when receiving products');
         isValid = false;
@@ -490,6 +541,28 @@ export default function AddTransactionModal({ isOpen, onClose, onSuccess }: AddT
       const itemsWithBatchErrors = selectedItems.filter(item => item.batch_error);
       if (itemsWithBatchErrors.length > 0) {
         setError('Please fix all batch number errors before submitting');
+        isValid = false;
+      }
+    }
+    
+    // Batch validation for outgoing transactions
+    if (isStockOut(transactionType)) {
+      const itemsWithoutBatch = validItems.filter(item => !item.batch_id);
+      if (itemsWithoutBatch.length > 0) {
+        setError('Batch selection is required for all items when selling products');
+        isValid = false;
+      }
+      
+      // Validate quantity doesn't exceed available batch quantity
+      const itemsExceedingBatch = validItems.filter(item => {
+        if (item.selected_batch && item.quantity_change > item.selected_batch.remaining_quantity) {
+          return true;
+        }
+        return false;
+      });
+      
+      if (itemsExceedingBatch.length > 0) {
+        setError('Quantity cannot exceed available batch quantity');
         isValid = false;
       }
     }
@@ -524,6 +597,14 @@ export default function AddTransactionModal({ isOpen, onClose, onSuccess }: AddT
             };
           }
           
+          // Add batch_id for outgoing transactions
+          if (isStockOut(transactionType) && item.batch_id) {
+            return {
+              ...baseItem,
+              batch_id: item.batch_id
+            };
+          }
+          
           return baseItem;
         });
 
@@ -534,9 +615,9 @@ export default function AddTransactionModal({ isOpen, onClose, onSuccess }: AddT
       }
 
       const transactionData: TransactionCreate = {
-        transaction_type: transactionType === 'Receive Products (from Brands)' ? 'Receive Products' : 'Dispatch goods',
+        transaction_type: transactionType === 'Receive Products (from Brands)' ? 'INCOMING' : 'OUTGOING',
         transaction_status: 'Pending',
-        reference_number: referenceNumber,
+        ...(referenceNumber.trim() && { reference_number: referenceNumber.trim() }),
         due_date: dueDate || undefined,
         notes: notes || undefined,
         items: validItems,
@@ -638,15 +719,20 @@ export default function AddTransactionModal({ isOpen, onClose, onSuccess }: AddT
             {/* Reference Number */}
             <div>
               <label className="block text-sm mb-2 text-[#2C2C2C]">
-                Reference Number <span className="text-[#2C2C2C]/50">*</span>
+                Reference Number
               </label>
               <input
                 type="text"
                 value={referenceNumber}
                 onChange={(e) => setReferenceNumber(e.target.value)}
                 className="w-full p-2.5 border-[1.5px] border-[#D5D7DA] rounded-lg"
-                placeholder="Enter reference number"
+                placeholder={`Auto-generated: ${previewReferenceNumber}`}
               />
+              {!referenceNumber.trim() && (
+                <p className="text-xs text-gray-500 mt-1">
+                  Preview: {previewReferenceNumber}
+                </p>
+              )}
             </div>
 
             {/* Entity Selection */}
@@ -730,7 +816,8 @@ export default function AddTransactionModal({ isOpen, onClose, onSuccess }: AddT
                 {selectedItems.map((selectedItem, index) => (
                   <div key={index} className="border border-gray-200 rounded-lg p-4 space-y-3">                    {/* Item Selection Row */}
                     <div className="flex gap-3 items-start">
-                      <div className="flex-1">                        <SearchableDropdown
+                      <div className="flex-1 min-w-0">
+                        <SearchableDropdown
                           options={filteredItems.map(item => ({
                             value: item.item_id,
                             label: item.item_name,
@@ -746,24 +833,32 @@ export default function AddTransactionModal({ isOpen, onClose, onSuccess }: AddT
                           loadingText="Loading items..."
                         />
                       </div>
-                      <div className="w-32">
-                        <input
-                          type="number"
-                          value={Math.abs(selectedItem.quantity_change) || ''}
-                          onChange={(e) => handleQuantityChange(index, e.target.value)}
-                          className={`w-full p-2.5 border-[1.5px] ${
-                            selectedItem.error ? 'border-[#D3465C]' : 'border-[#D5D7DA]'
-                          } rounded-lg`}
-                          placeholder="Qty"
-                          min="1"
-                          max={MAX_QUANTITY}
-                        />
-                        {selectedItem.error && (
-                          <div className="flex items-center gap-1 text-[#D3465C] text-xs mt-1">
-                            <AlertCircle className="h-3 w-3" />
-                            <span>{selectedItem.error}</span>
-                          </div>
-                        )}
+                      <div className="flex items-center gap-2">
+                        <div className="w-24">
+                          <input
+                            type="number"
+                            value={Math.abs(selectedItem.quantity_change) || ''}
+                            onChange={(e) => handleQuantityChange(index, e.target.value)}
+                            className={`w-full p-2.5 border-[1.5px] ${
+                              selectedItem.error ? 'border-[#D3465C]' : 'border-[#D5D7DA]'
+                            } rounded-lg`}
+                            placeholder="Quantity"
+                            min="1"
+                            max={MAX_QUANTITY}
+                          />
+                          {selectedItem.error && (
+                            <div className="flex items-center gap-1 text-[#D3465C] text-xs mt-1">
+                              <AlertCircle className="h-3 w-3" />
+                              <span>{selectedItem.error}</span>
+                            </div>
+                          )}
+                        </div>
+                        <div className="text-sm text-gray-600 min-w-0">
+                          {selectedItem.item !== 0 && (() => {
+                            const item = items.find((i: Item) => i.item_id === selectedItem.item);
+                            return item ? item.uom : '';
+                          })()}
+                        </div>
                       </div>
                       {selectedItems.length > 1 && (
                         <button
@@ -827,7 +922,7 @@ export default function AddTransactionModal({ isOpen, onClose, onSuccess }: AddT
                             className="w-full p-2 border-[1.5px] border-[#D5D7DA] rounded-lg text-sm"
                             placeholder="0.00"
                             min="0"
-                            step="0.01"
+                            step="1"
                           />
                         </div>
                         <div>
@@ -838,6 +933,41 @@ export default function AddTransactionModal({ isOpen, onClose, onSuccess }: AddT
                             onChange={(e) => handleBatchFieldChange(index, 'expiry_date', e.target.value)}
                             className="w-full p-2 border-[1.5px] border-[#D5D7DA] rounded-lg text-sm"
                           />
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Batch Selection Row - Only for Sell Products */}
+                    {isStockOut(transactionType) && selectedItem.item !== 0 && selectedItem.available_batches && (
+                      <div className="pt-3 border-t border-gray-100">
+                        <div>
+                          <label className="block text-xs text-gray-600 mb-1">
+                            Select Batch *
+                          </label>
+                          <select
+                            value={selectedItem.batch_id || ''}
+                            onChange={(e) => {
+                              const batchId = parseInt(e.target.value);
+                              const selectedBatch = selectedItem.available_batches?.find(b => b.batch_id === batchId);
+                              const newItems = [...selectedItems];
+                              newItems[index].batch_id = batchId;
+                              newItems[index].selected_batch = selectedBatch;
+                              setSelectedItems(newItems);
+                            }}
+                            className="w-full p-2 border-[1.5px] border-[#D5D7DA] rounded-lg text-sm"
+                          >
+                            <option value="">Select a batch...</option>
+                            {selectedItem.available_batches.map(batch => (
+                              <option key={batch.batch_id} value={batch.batch_id}>
+                                Batch {batch.batch_number} - {batch.remaining_quantity} available (₱{batch.cost_price})
+                              </option>
+                            ))}
+                          </select>
+                          {selectedItem.selected_batch && (
+                            <div className="text-xs text-gray-500 mt-1">
+                              Available: {selectedItem.selected_batch.remaining_quantity} units
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}

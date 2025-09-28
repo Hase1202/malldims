@@ -3,10 +3,7 @@ import FilterDropdown from '../../common/FilterDropdown';
 import { useBrands } from '../../../hooks/useBrands';
 
 interface FilterState {
-    item_type: string | null;
-    category: string | null;
     brand: string | null;
-    availability_status: string | null;
 }
 
 interface InventoryFilterBarProps {
@@ -19,30 +16,6 @@ const InventoryFilterBar: React.FC<InventoryFilterBarProps> = ({
     currentFilters
 }) => {
     const { brands: brandData, loading: isLoadingBrands } = useBrands();
-
-    const itemTypeOptions = [
-        { value: 'Skincare Products', label: 'Skincare Products' },
-        { value: 'Makeup Products', label: 'Makeup Products' },
-        { value: 'Hair Care Products', label: 'Hair Care Products' },
-        { value: 'Fragrance Products', label: 'Fragrance Products' },
-        { value: 'Body Care Products', label: 'Body Care Products' },
-        { value: 'Beauty Tools & Accessories', label: 'Beauty Tools & Accessories' }
-    ];
-
-    const categoryOptions = [
-        { value: 'Premium Brand', label: 'Premium Brand' },
-        { value: 'Drugstore Brand', label: 'Drugstore Brand' },
-        { value: 'Organic/Natural', label: 'Organic/Natural' },
-        { value: 'Korean Beauty', label: 'Korean Beauty' },
-        { value: 'Luxury Collection', label: 'Luxury Collection' },
-        { value: 'Professional Use', label: 'Professional Use' }
-    ];
-
-    const availabilityOptions = [
-        { value: 'In Stock', label: 'In Stock' },
-        { value: 'Low Stock', label: 'Low Stock' },
-        { value: 'Out of Stock', label: 'Out of Stock' }
-    ];
 
     const brands = brandData.map(b => b.brand_name);
 
@@ -72,10 +45,7 @@ const InventoryFilterBar: React.FC<InventoryFilterBarProps> = ({
             <button 
                 onClick={() => {
                     const allNull = {
-                        item_type: null,
-                        category: null,
-                        brand: null,
-                        availability_status: null
+                        brand: null
                     };
                     onFiltersChange(allNull);
                 }}
@@ -89,32 +59,11 @@ const InventoryFilterBar: React.FC<InventoryFilterBarProps> = ({
             </button>
 
             <FilterDropdown
-                label="Type"
-                options={itemTypeOptions}
-                value={currentFilters.item_type}
-                onChange={(value: string | null) => handleFilterChange('item_type', value)}
-            />
-
-            <FilterDropdown
-                label="Category"
-                options={categoryOptions}
-                value={currentFilters.category}
-                onChange={(value: string | null) => handleFilterChange('category', value)}
-            />
-
-            <FilterDropdown
                 label="Brand"
                 options={brands}
                 value={getBrandName(currentFilters.brand)}
                 onChange={(value: string | null) => handleFilterChange('brand', value)}
                 isLoading={isLoadingBrands}
-            />
-
-            <FilterDropdown
-                label="Availability"
-                options={availabilityOptions}
-                value={currentFilters.availability_status}
-                onChange={(value: string | null) => handleFilterChange('availability_status', value)}
             />
 
             <div className={`flex-shrink-0 flex items-center gap-1.5 py-1.5 px-3.5 rounded-lg border-[1.5px] border-[#DADAF3] text-[#0504AA] bg-[#F2F2FB]`}>

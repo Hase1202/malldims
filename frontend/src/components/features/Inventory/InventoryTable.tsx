@@ -20,19 +20,16 @@ interface SortableColumn {
 }
 
 const SORTABLE_COLUMNS: SortableColumn[] = [
-    { key: 'item_name', label: 'Product Name' }, // Changed from 'Item'
-    { key: 'model_number', label: 'SKU/Model' }, // More relevant for beauty
-    { key: 'quantity', label: 'Stock Qty' },
-    { key: 'threshold_value', label: 'Min. Stock' } // More descriptive
+    { key: 'brand_name', label: 'Brand' },
+    { key: 'item_name', label: 'Product Name' },
+    { key: 'sku', label: 'SKU' },
+    { key: 'total_quantity', label: 'Stock Qty' }
 ];
 
 interface InventoryTableProps {
     searchQuery: string;
     filters: {
-        item_type: string | null;
-        category: string | null;
         brand: string | null;
-        availability_status: string | null;
     };
     onAdjustment?: (message: string, updatedItem?: Item) => void;
     onSortChange?: (sort: SortConfig) => void;
@@ -94,24 +91,9 @@ const InventoryTable: React.FC<InventoryTableProps> = ({
                 console.log('Added sorting:', orderingValue);
             }
             
-            if (filters.item_type) {
-                params.append('item_type', filters.item_type);
-                console.log('Added item_type filter:', filters.item_type);
-            }
-            
-            if (filters.category) {
-                params.append('category', filters.category);
-                console.log('Added category filter:', filters.category);
-            }
-            
             if (filters.brand) {
                 params.append('brand', filters.brand);
                 console.log('Added brand filter:', filters.brand);
-            }
-            
-            if (filters.availability_status) {
-                params.append('availability_status', filters.availability_status);
-                console.log('Added availability_status filter:', filters.availability_status);
             }
             
             if (searchQuery) {
@@ -368,54 +350,50 @@ const InventoryTable: React.FC<InventoryTableProps> = ({
         return parts;
     };
 
-    const getAvailabilityColor = (availability: string): string => {
-        // Normalize the status value for consistent display
-        const status = availability ? availability.toLowerCase().trim() : '';
-        
-        if (status.includes('in stock')) {
-            return 'text-[#065F46] bg-[#ECFDF5] px-2 py-0.5 rounded-full text-xs font-medium'; // green
-        } 
-        
-        if (status.includes('low stock')) {
-            return 'text-[#D97708] bg-[#FFF2E5] px-2 py-0.5 rounded-full text-xs font-medium'; // orange
-        }
-        
-        if (status.includes('out of stock')) {
-            return 'text-[#DF3938] bg-[#FEECEC] px-2 py-0.5 rounded-full text-xs font-medium'; // red
-        }
-        
-        // Default fallback
-        return 'text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full text-xs font-medium';
-    };
-
-    const getCategoryStyle = (category: string): string => {
-        const categoryLower = category.toLowerCase();
-        
-        if (categoryLower.includes('premium') || categoryLower.includes('luxury')) {
-            return 'bg-purple-50 text-purple-800'; // Purple for premium/luxury
-        }
-        if (categoryLower.includes('drugstore')) {
-            return 'bg-blue-50 text-blue-800'; // Blue for drugstore
-        }
-        if (categoryLower.includes('organic') || categoryLower.includes('natural')) {
-            return 'bg-green-50 text-green-800'; // Green for organic/natural
-        }
-        if (categoryLower.includes('korean')) {
-            return 'bg-pink-50 text-pink-800'; // Pink for Korean beauty
-        }
-        if (categoryLower.includes('professional')) {
-            return 'bg-gray-50 text-gray-800'; // Gray for professional
-        }
-        
-        return 'bg-amber-50 text-amber-800'; // Default amber
-    };
-
     return (
         <div className="w-full bg-white">
             <div className="overflow-x-auto border-[#EBEAEA] border-[1.5px] rounded-xl">
                 <table className="w-full border-collapse" role="grid" aria-label="Inventory items">
                     <thead>
                         <tr className="border-b border-[#EBEAEA] bg-gray-50">
+                            <th className="px-4 py-3 text-left text-xs lg:text-sm text-[#646464]">
+                                <div className="relative inline-block">
+                                    <button
+                                        onClick={() => setActiveSortColumn(activeSortColumn === 'brand_name' ? null : 'brand_name')}
+                                        className="inline-flex items-center gap-1.5 px-2 rounded transition-all font-medium text-[#6F6F6F] hover:bg-gray-100 active:scale-95"
+                                    >
+                                        Brand
+                                        {getSortIcon('brand_name')}
+                                    </button>
+                                    {activeSortColumn === 'brand_name' && (
+                                        <div className="absolute z-10 mt-1 w-36 bg-white rounded-lg shadow-lg border-[1.5px] border-[#EBEAEA] py-1 sort-dropdown">
+                                            <button
+                                                onClick={() => handleSort('brand_name', 'asc')}
+                                                className="flex items-center gap-2 w-full px-3 py-2 text-sm text-[#6F6F6F] font-normal hover:bg-gray-50 active:scale-95"
+                                            >
+                                                <ArrowUp className="w-4 h-4" />
+                                                Ascending
+                                            </button>
+                                            <button
+                                                onClick={() => handleSort('brand_name', 'desc')}
+                                                className="flex items-center gap-2 w-full px-3 py-2 text-sm text-[#6F6F6F] font-normal hover:bg-gray-50 active:scale-95"
+                                            >
+                                                <ArrowDown className="w-4 h-4" />
+                                                Descending
+                                            </button>
+                                            {sort.field === 'brand_name' && (
+                                                <button
+                                                    onClick={() => handleSort('brand_name', null)}
+                                                    className="flex items-center gap-2 w-full px-3 py-2.5 -mb-1 text-sm text-red-500 font-normal hover:bg-gray-50 active:scale-95 border-t border-[#EBEAEA]"
+                                                >
+                                                    <X className="w-4 h-4" />
+                                                    Clear sort
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            </th>
                             <th className="px-4 py-3 text-left text-xs lg:text-sm text-[#646464]">
                                 <div className="relative inline-block">
                                     <button
@@ -457,31 +435,31 @@ const InventoryTable: React.FC<InventoryTableProps> = ({
                             <th className="px-4 py-3 text-left text-xs lg:text-sm font-medium text-[#646464]">
                                 <div className="relative inline-block">
                                     <button
-                                        onClick={() => setActiveSortColumn(activeSortColumn === 'model_number' ? null : 'model_number')}
+                                        onClick={() => setActiveSortColumn(activeSortColumn === 'sku' ? null : 'sku')}
                                         className="inline-flex items-center gap-1.5 px-2 rounded transition-all text-[#6F6F6F] hover:bg-gray-100 active:scale-95 whitespace-nowrap"
                                     >
-                                        SKU/Model
-                                        {getSortIcon('model_number')}
+                                        SKU
+                                        {getSortIcon('sku')}
                                     </button>
-                                    {activeSortColumn === 'model_number' && (
+                                    {activeSortColumn === 'sku' && (
                                         <div className="absolute z-10 mt-1 w-36 bg-white rounded-lg shadow-lg border-[1.5px] border-[#EBEAEA] py-1 sort-dropdown">
                                             <button
-                                                onClick={() => handleSort('model_number', 'asc')}
+                                                onClick={() => handleSort('sku', 'asc')}
                                                 className="flex items-center gap-2 w-full px-3 py-2 text-sm text-[#6F6F6F] font-normal hover:bg-gray-50 active:scale-95"
                                             >
                                                 <ArrowUp className="w-4 h-4" />
                                                 Ascending
                                             </button>
                                             <button
-                                                onClick={() => handleSort('model_number', 'desc')}
+                                                onClick={() => handleSort('sku', 'desc')}
                                                 className="flex items-center gap-2 w-full px-3 py-2 text-sm text-[#6F6F6F] font-normal hover:bg-gray-50 active:scale-95"
                                             >
                                                 <ArrowDown className="w-4 h-4" />
                                                 Descending
                                             </button>
-                                            {sort.field === 'model_number' && (
+                                            {sort.field === 'sku' && (
                                                 <button
-                                                    onClick={() => handleSort('model_number', null)}
+                                                    onClick={() => handleSort('sku', null)}
                                                     className="flex items-center gap-2 w-full px-3 py-2.5 -mb-1 text-sm text-red-500 font-normal hover:bg-gray-50 active:scale-95 border-t border-[#EBEAEA]"
                                                 >
                                                     <X className="w-4 h-4" />
@@ -492,36 +470,34 @@ const InventoryTable: React.FC<InventoryTableProps> = ({
                                     )}
                                 </div>
                             </th>
-                            <th className="px-4 py-3 text-left text-xs lg:text-sm font-medium text-[#646464]">Type</th>
-                            <th className="px-4 py-3 text-left text-xs lg:text-sm font-medium text-[#646464]">Category</th>
                             <th className="px-4 py-3 text-left text-xs lg:text-sm font-medium text-[#646464]">
                                 <div className="relative inline-block">
                                     <button
-                                        onClick={() => setActiveSortColumn(activeSortColumn === 'quantity' ? null : 'quantity')}
+                                        onClick={() => setActiveSortColumn(activeSortColumn === 'total_quantity' ? null : 'total_quantity')}
                                         className="inline-flex items-center gap-1.5 px-2 rounded transition-all text-[#6F6F6F] hover:bg-gray-100 active:scale-95"
                                     >
                                         Stock Qty
-                                        {getSortIcon('quantity')}
+                                        {getSortIcon('total_quantity')}
                                     </button>
-                                    {activeSortColumn === 'quantity' && (
+                                    {activeSortColumn === 'total_quantity' && (
                                         <div className="absolute z-10 mt-1 w-36 bg-white rounded-lg shadow-lg border-[1.5px] border-[#EBEAEA] py-1 sort-dropdown">
                                             <button
-                                                onClick={() => handleSort('quantity', 'asc')}
+                                                onClick={() => handleSort('total_quantity', 'asc')}
                                                 className="flex items-center gap-2 w-full px-3 py-2 text-sm text-[#6F6F6F] font-normal hover:bg-gray-50 active:scale-95"
                                             >
                                                 <ArrowUp className="w-4 h-4" />
                                                 Ascending
                                             </button>
                                             <button
-                                                onClick={() => handleSort('quantity', 'desc')}
+                                                onClick={() => handleSort('total_quantity', 'desc')}
                                                 className="flex items-center gap-2 w-full px-3 py-2 text-sm text-[#6F6F6F] font-normal hover:bg-gray-50 active:scale-95"
                                             >
                                                 <ArrowDown className="w-4 h-4" />
                                                 Descending
                                             </button>
-                                            {sort.field === 'quantity' && (
+                                            {sort.field === 'total_quantity' && (
                                                 <button
-                                                    onClick={() => handleSort('quantity', null)}
+                                                    onClick={() => handleSort('total_quantity', null)}
                                                     className="flex items-center gap-2 w-full px-3 py-2.5 -mb-1 text-sm text-red-500 font-normal hover:bg-gray-50 active:scale-95 border-t border-[#EBEAEA]"
                                                 >
                                                     <X className="w-4 h-4" />
@@ -532,49 +508,6 @@ const InventoryTable: React.FC<InventoryTableProps> = ({
                                     )}
                                 </div>
                             </th>
-                            <th className="px-4 py-3 text-left text-xs lg:text-sm font-medium text-[#646464]">
-                                <div className="relative inline-block">
-                                    <button
-                                        onClick={() => setActiveSortColumn(activeSortColumn === 'threshold_value' ? null : 'threshold_value')}
-                                        className="inline-flex items-center gap-1.5 px-2 rounded transition-all text-[#6F6F6F] hover:bg-gray-100 active:scale-95"
-                                    >
-                                        Min. Stock
-                                        {getSortIcon('threshold_value')}
-                                    </button>
-                                    {activeSortColumn === 'threshold_value' && (
-                                        <div className="absolute z-10 mt-1 w-36 bg-white rounded-lg shadow-lg border-[1.5px] border-[#EBEAEA] py-1 sort-dropdown">
-                                            <button
-                                                onClick={() => handleSort('threshold_value', 'asc')}
-                                                className="flex items-center gap-2 w-full px-3 py-2 text-sm text-[#6F6F6F] font-normal hover:bg-gray-50 active:scale-95"
-                                            >
-                                                <ArrowUp className="w-4 h-4" />
-                                                Ascending
-                                            </button>
-                                            <button
-                                                onClick={() => handleSort('threshold_value', 'desc')}
-                                                className="flex items-center gap-2 w-full px-3 py-2 text-sm text-[#6F6F6F] font-normal hover:bg-gray-50 active:scale-95"
-                                            >
-                                                <ArrowDown className="w-4 h-4" />
-                                                Descending
-                                            </button>
-                                            {sort.field === 'threshold_value' && (
-                                                <button
-                                                    onClick={() => handleSort('threshold_value', null)}
-                                                    className="flex items-center gap-2 w-full px-3 py-2.5 -mb-1 text-sm text-red-500 font-normal hover:bg-gray-50 active:scale-95 border-t border-[#EBEAEA]"
-                                                >
-                                                    <X className="w-4 h-4" />
-                                                    Clear sort
-                                                </button>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                            </th>
-                            <th className="px-4 py-3 text-left text-xs lg:text-sm font-medium text-[#646464]">Brand</th>
-                            <th className="px-4 py-3 text-left text-xs lg:text-sm font-medium text-[#646464]">Pricing</th>
-                            <th className="px-4 py-3 text-left text-xs lg:text-sm font-medium text-[#646464]">Batches</th>
-                            <th className="px-4 py-3 text-left text-xs lg:text-sm font-medium text-[#646464]">Availability</th>
-                            <th className="px-4 py-3 text-left text-xs lg:text-sm font-medium text-[#646464]">Actions</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y">
@@ -594,140 +527,47 @@ const InventoryTable: React.FC<InventoryTableProps> = ({
                                 ref={index === items.length - 1 ? lastItemRef : null}
                             >
                                 <td className="px-4 py-3 text-xs lg:text-sm text-gray-900">
-                                    <div className="flex flex-col">
-                                        <span className="font-medium">
-                                            {highlightText(item.item_name, searchQuery)}
-                                        </span>
-                                        {(item as any).brand_name && (
-                                            <span className="text-xs text-gray-500">
-                                                {(item as any).brand_name}
-                                            </span>
-                                        )}
-                                    </div>
+                                    {highlightText(
+                                        item.brand_name || 
+                                        (typeof (item as any).brand === 'string' ? (item as any).brand : 'N/A'), 
+                                        searchQuery
+                                    )}
                                 </td>
                                 <td className="px-4 py-3 text-xs lg:text-sm text-gray-900">
-                                    {highlightText(item.model_number, searchQuery)}
-                                </td>
-                                <td className="px-4 py-3 text-xs lg:text-sm text-gray-900">{item.item_type}</td>
-                                <td className="px-4 py-3 text-xs lg:text-sm text-gray-900">
-                                    <span className={`px-1.5 lg:px-2 py-0.5 lg:py-1 rounded-full text-[10px] lg:text-xs ${getCategoryStyle(item.category)}`}>
-                                        {item.category}
+                                    <span className="font-medium">
+                                        {highlightText(item.item_name, searchQuery)}
                                     </span>
+                                </td>
+                                <td className="px-4 py-3 text-xs lg:text-sm text-gray-900">
+                                    {highlightText(item.sku || item.model_number || '', searchQuery)}
                                 </td>
                                 <td className="px-4 py-3 text-xs lg:text-sm text-gray-900 relative group">
                                     <div className="flex items-center">
-                                        <span>{item.quantity}</span>
-                                        {!isSales(user) && (
-                                            <button 
-                                                onClick={(e) => handleOpenAdjustmentModal(e, item)}
-                                                className="ml-2 p-1 rounded-full text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-gray-100 hover:text-blue-600"
-                                                aria-label="Adjust quantity"
-                                            >
-                                                <Edit2 className="h-3.5 w-3.5" />
-                                            </button>
-                                        )}
-                                    </div>
-                                </td>
-                                <td className="px-4 py-3 text-xs lg:text-sm text-gray-900">{item.threshold_value}</td>
-                                <td className="px-4 py-3 text-xs lg:text-sm text-gray-900">{
-                                    'brand_name' in item 
-                                        ? (item as any).brand_name 
-                                        : typeof (item as any).brand === 'string' 
-                                            ? (item as any).brand 
-                                            : 'N/A'
-                                }</td>
-                                <td className="px-4 py-3 text-xs lg:text-sm text-gray-900">
-                                    <div className="flex flex-col space-y-1">
-                                        {(item as any).pricing ? (
-                                            <>
-                                                <span className="text-green-600 font-medium">
-                                                    ₱{(item as any).pricing.srp || 0}
-                                                </span>
-                                                <span className="text-xs text-gray-500">
-                                                    SRP • {user?.cost_tier || 'SUB'} tier
-                                                </span>
-                                            </>
-                                        ) : (
-                                            <button
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    navigate(`/inventory/${item.item_id}/pricing`);
-                                                }}
-                                                className="text-blue-600 text-xs hover:underline"
-                                            >
-                                                Set Pricing
-                                            </button>
-                                        )}
-                                    </div>
-                                </td>
-                                <td className="px-4 py-3 text-xs lg:text-sm text-gray-900">
-                                    <div className="flex flex-col space-y-1">
-                                        {(item as any).active_batches ? (
-                                            <>
-                                                <span className="font-medium">
-                                                    {(item as any).active_batches} batches
-                                                </span>
-                                                <span className="text-xs text-gray-500">
-                                                    Total: {(item as any).total_available_quantity || 0} available
-                                                </span>
-                                            </>
-                                        ) : (
+                                        <div className="flex flex-col">
+                                            <span>{item.total_quantity} {item.uom || 'pc'}</span>
                                             <button
                                                 onClick={(e) => {
                                                     e.stopPropagation();
                                                     navigate(`/inventory/${item.item_id}/batches`);
                                                 }}
-                                                className="text-blue-600 text-xs hover:underline"
+                                                className="text-xs text-blue-600 hover:text-blue-800 hover:underline text-left"
+                                                title="Click to view batches"
                                             >
-                                                Add Batch
+                                                {item.active_batches_count} batch{item.active_batches_count !== 1 ? 'es' : ''}
                                             </button>
-                                        )}
-                                    </div>
-                                </td>
-                                <td className="px-4 py-3">
-                                    <span className={getAvailabilityColor(item.availability_status)}>
-                                        {item.availability_status}
-                                    </span>
-                                </td>
-                                <td className="px-4 py-3">
-                                    <div className="flex items-center space-x-2">
-                                        <button
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                navigate(`/inventory/${item.item_id}/pricing`);
-                                            }}
-                                            className="text-blue-600 text-xs hover:underline"
-                                            title="Manage pricing"
-                                        >
-                                            Pricing
-                                        </button>
-                                        <span className="text-gray-300">|</span>
-                                        <button
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                navigate(`/inventory/${item.item_id}/batches`);
-                                            }}
-                                            className="text-green-600 text-xs hover:underline"
-                                            title="Manage batches"
-                                        >
-                                            Batches
-                                        </button>
-                                        {(item as any).active_batches > 0 && (
-                                            <>
-                                                <span className="text-gray-300">|</span>
-                                                <button
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        // TODO: Navigate to sales transaction
-                                                        console.log('Create sale for item:', item.item_id);
-                                                    }}
-                                                    className="text-purple-600 text-xs hover:underline"
-                                                    title="Create sale"
+                                        </div>
+                                        <div className="flex items-center ml-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            {!isSales(user) && (
+                                                <button 
+                                                    onClick={(e) => handleOpenAdjustmentModal(e, item)}
+                                                    className="p-1 rounded-full text-gray-400 hover:bg-gray-100 hover:text-blue-600"
+                                                    aria-label="Adjust quantity"
+                                                    title="Adjust Inventory Quantity"
                                                 >
-                                                    Sell
+                                                    <Edit2 className="h-3.5 w-3.5" />
                                                 </button>
-                                            </>
-                                        )}
+                                            )}
+                                        </div>
                                     </div>
                                 </td>
                             </tr>

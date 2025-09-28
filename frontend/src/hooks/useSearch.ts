@@ -4,10 +4,7 @@ import { itemsApi, brandsApi } from '../lib/api';
 import { Item, APIResponse, Brand } from '../types/inventory';
 
 interface Filters {
-    item_type: string | null;
-    category: string | null;
     brand: string | null;
-    availability_status: string | null;
 }
 
 // Add a generic interface for paginated responses
@@ -56,25 +53,9 @@ export function useSearch({
             }
 
             // Add filters to params - make sure to log each one for debugging
-            if (filters.item_type) {
-                params.append('item_type', filters.item_type);
-                console.log('Applied item_type filter:', filters.item_type);
-            }
-            
-            if (filters.category) {
-                params.append('category', filters.category);
-                console.log('Applied category filter:', filters.category);
-            }
-            
             if (filters.brand) {
                 params.append('brand', filters.brand);
                 console.log('Applied brand filter:', filters.brand);
-            }
-            
-            if (filters.availability_status) {
-                // Make sure to use the exact format expected by the backend
-                params.append('availability_status', filters.availability_status);
-                console.log('Applied availability filter:', filters.availability_status);
             }
 
             // Log the full URL for debugging
