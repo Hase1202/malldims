@@ -295,14 +295,55 @@ class TransactionCreateSerializer(serializers.ModelSerializer):
 
     def validate(self, data):
         """Additional validation"""
+        print("🔍 TransactionCreateSerializer.validate() called")
+        print("📋 Data to validate:", data)
+
+        # Check required fields based on transaction type
+        transaction_type = data.get("transaction_type")
+        print(f"📝 Transaction type: {transaction_type}")
+
+        if transaction_type == "OUTGOING":
+            customer_name = data.get("customer_name")
+            customer = data.get("customer")
+
+            if not customer_name and not customer:
+                raise serializers.ValidationError(
+                    "Customer information is required for outgoing transactions"
+                )
+
+            # Check items have required outgoing fields
+            items = data.get("items", [])
+            for i, item in enumerate(items):
+                print(f"🔍 Validating item {i + 1}: {item}")
+
+                # Check if pricing_tier is provided for outgoing transactions
+                if not item.get("pricing_tier"):
+                    raise serializers.ValidationError(
+                        f"Pricing tier is required for item {i + 1} in outgoing transactions"
+                    )
+
+                # Check if unit_price is provided
+                if not item.get("unit_price") or item.get("unit_price") <= 0:
+                    raise serializers.ValidationError(
+                        f"Valid unit price is required for item {i + 1} in outgoing transactions"
+                    )
+
+        print("✅ Validation passed")
         return data
 
     def create(self, validated_data):
+        print("🔍 TransactionCreateSerializer.create() called")
+        print("📋 Raw validated_data:", validated_data)
+
         items_data = validated_data.pop("items")
         customer_name = validated_data.pop("customer_name", None)
 
+        print("📦 Items data:", items_data)
+        print("👤 Customer name:", customer_name)
+
         # Handle customer creation/lookup for outgoing transactions
         if customer_name and not validated_data.get("customer"):
+            print(f"🔍 Creating/finding customer: {customer_name}")
             customer, created = Customer.objects.get_or_create(
                 company_name=customer_name,
                 defaults={
@@ -314,6 +355,9 @@ class TransactionCreateSerializer(serializers.ModelSerializer):
                 },
             )
             validated_data["customer"] = customer
+            print(
+                f"✅ Customer {'created' if created else 'found'}: {customer.company_name}"
+            )
 
         # Set account to current user if not provided
         if not validated_data.get("account"):
@@ -347,15 +391,20 @@ class TransactionCreateSerializer(serializers.ModelSerializer):
             if first_brand:
                 validated_data["brand"] = first_brand
 
+        print("🏗️ Creating transaction with data:", validated_data)
         transaction = Transaction.objects.create(**validated_data)
+        print(f"✅ Transaction created: {transaction.transaction_id}")
 
         # Create transaction items
-        for item_data in items_data:
+        for i, item_data in enumerate(items_data):
+            print(f"🔍 Processing item {i + 1}/{len(items_data)}: {item_data}")
+
             # Handle both 'item' and 'item_id' keys from frontend
             item_id = item_data.get("item") or item_data.get("item_id")
             if item_id:
                 try:
                     item = Item.objects.get(pk=item_id)
+                    print(f"📦 Found item: {item.item_name}")
 
                     # Get quantity_change - preserve the sign for correct stock calculation
                     quantity_change = item_data.get("quantity_change") or item_data.get(
@@ -364,38 +413,61 @@ class TransactionCreateSerializer(serializers.ModelSerializer):
                     quantity = abs(
                         quantity_change
                     )  # Absolute value for transaction item record
+                    print(
+                        f"📊 Quantity: {quantity} (from quantity_change: {quantity_change})"
+                    )
 
                     # Get cost_price for incoming transactions or unit_price for others
                     if transaction.transaction_type == "INCOMING":
                         # For incoming transactions, use cost_price from frontend
                         unit_price = item_data.get("cost_price", 0)
+                        print(f"💰 Using cost_price for INCOMING: {unit_price}")
                     else:
                         # For outgoing/adjustment transactions, use unit_price
                         unit_price = item_data.get("unit_price", 0)
+                        print(
+                            f"💰 Using unit_price for {transaction.transaction_type}: {unit_price}"
+                        )
 
                     # Get batch information for outgoing transactions
                     batch = None
                     if transaction.transaction_type == "OUTGOING":
                         batch_id = item_data.get("batch_id")
+                        print(f"🗃️ Looking for batch_id: {batch_id}")
+
                         if batch_id:
                             try:
                                 batch = ItemBatch.objects.get(pk=batch_id)
+                                print(
+                                    f"✅ Found batch: {batch.batch_number} with {batch.remaining_quantity} available"
+                                )
+
                                 # Validate that there's enough quantity in the batch
                                 if batch.remaining_quantity < quantity:
-                                    raise serializers.ValidationError(
+                                    error_msg = (
                                         f"Insufficient quantity in batch {batch.batch_number}. "
                                         f"Available: {batch.remaining_quantity}, Requested: {quantity}"
                                     )
+                                    print(f"❌ Batch quantity error: {error_msg}")
+                                    raise serializers.ValidationError(error_msg)
+
                                 # For outgoing transactions, use the batch cost price if no unit_price provided
                                 if not unit_price and batch:
                                     unit_price = batch.cost_price
+                                    print(
+                                        f"💰 Using batch cost price as unit_price: {unit_price}"
+                                    )
                             except ItemBatch.DoesNotExist:
-                                raise serializers.ValidationError(
-                                    f"Batch with ID {batch_id} does not exist."
-                                )
+                                error_msg = f"Batch with ID {batch_id} does not exist."
+                                print(f"❌ Batch not found: {error_msg}")
+                                raise serializers.ValidationError(error_msg)
+                        else:
+                            print("ℹ️ No batch_id provided for OUTGOING transaction")
 
                     # Calculate total price
                     total_price = item_data.get("total_price", quantity * unit_price)
+                    print(f"💵 Total price: {total_price}")
+                    print(f"🏷️ Pricing tier: {item_data.get('pricing_tier')}")
 
                     transaction_item = TransactionItem.objects.create(
                         transaction=transaction,
@@ -406,6 +478,7 @@ class TransactionCreateSerializer(serializers.ModelSerializer):
                         total_price=total_price,
                         pricing_tier=item_data.get("pricing_tier"),
                     )
+                    print(f"✅ Created TransactionItem: {transaction_item.id}")
 
                     # Handle batch logic based on transaction type
                     if transaction.transaction_type == "INCOMING":
@@ -461,6 +534,11 @@ class TransactionCreateSerializer(serializers.ModelSerializer):
                                     batch.save()
 
                 except Item.DoesNotExist:
+                    print(f"❌ Item with ID {item_id} does not exist, skipping...")
                     continue
+                except Exception as e:
+                    print(f"🚨 Unexpected error processing item {item_id}: {e}")
+                    raise
 
+        print(f"🎉 Transaction {transaction.transaction_id} created successfully!")
         return transaction

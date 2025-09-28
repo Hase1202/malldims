@@ -27,7 +27,7 @@ Highest Price ←→ Lowest Price
   ```python
   def get_allowed_selling_tiers(self):
       """Returns the pricing tiers this user is allowed to sell at."""
-  
+
   def can_sell_at_tier(self, tier):
       """Check if this user can sell at a specific pricing tier."""
   ```
@@ -56,7 +56,7 @@ Highest Price ←→ Lowest Price
     user_cost_tier: PricingTier | null;
     allowed_selling_tiers: PricingTierOption[];
   }
-  
+
   interface PricingCalculationResult {
     tier_restriction_violated?: boolean;
     user_cost_tier?: PricingTier | null;

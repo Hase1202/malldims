@@ -864,7 +864,7 @@ export default function AddTransactionModal({
 
           // Add pricing info for outgoing transactions (batch_id optional if no batches available)
           if (isStockOut(transactionType)) {
-            return {
+            const outgoingItem = {
               ...baseItem,
               ...(item.batch_id && { batch_id: item.batch_id }),
               pricing_tier: item.pricing_tier,
@@ -873,6 +873,8 @@ export default function AddTransactionModal({
                 item.total_price ||
                 (item.unit_price || 0) * Math.abs(item.quantity_change),
             };
+            console.log(`🔍 Outgoing item ${item.item} data:`, outgoingItem);
+            return outgoingItem;
           }
 
           return baseItem;
@@ -901,6 +903,19 @@ export default function AddTransactionModal({
           : { brand: brandName! }),
       };
 
+      console.log("📤 Sending transaction data:", transactionData);
+      console.log(
+        "🔍 Transaction items breakdown:",
+        validItems.map((item, i) => ({
+          index: i,
+          item_id: item.item,
+          quantity: item.quantity_change,
+          batch_id: item.batch_id,
+          pricing_tier: item.pricing_tier,
+          unit_price: item.unit_price,
+        })),
+      );
+
       const response = await transactionsApi.create(transactionData);
 
       if (response.status === "success") {
@@ -913,7 +928,9 @@ export default function AddTransactionModal({
         setError(response.message || "Failed to create transaction");
       }
     } catch (error: any) {
-      console.error("Error creating transaction:", error);
+      console.error("🚨 Transaction Creation Error:", error);
+      console.error("📋 Transaction Data Sent:", transactionData);
+      console.error("📊 Valid Items:", validItems);
 
       // Better error handling to show specific network/server errors
       let errorMessage = "An unexpected error occurred";
@@ -924,8 +941,38 @@ export default function AddTransactionModal({
       } else if (error.response) {
         // Server responded with error status
         const status = error.response.status;
+        console.error(`❌ HTTP ${status} Error Response:`, error.response.data);
+
         if (status === 400) {
-          errorMessage = `Bad Request: ${error.response.data?.detail || error.response.data?.message || "Invalid data submitted"}`;
+          // Parse 400 errors more specifically
+          let detailMessage = "Invalid data submitted";
+
+          if (error.response.data) {
+            if (typeof error.response.data === "string") {
+              detailMessage = error.response.data;
+            } else if (error.response.data.detail) {
+              detailMessage = error.response.data.detail;
+            } else if (error.response.data.message) {
+              detailMessage = error.response.data.message;
+            } else if (error.response.data.non_field_errors) {
+              detailMessage = error.response.data.non_field_errors.join(", ");
+            } else {
+              // Show field-specific errors
+              const fieldErrors = [];
+              for (const [field, errors] of Object.entries(
+                error.response.data,
+              )) {
+                if (Array.isArray(errors)) {
+                  fieldErrors.push(`${field}: ${errors.join(", ")}`);
+                }
+              }
+              if (fieldErrors.length > 0) {
+                detailMessage = fieldErrors.join(" | ");
+              }
+            }
+          }
+
+          errorMessage = `Bad Request (400): ${detailMessage}`;
         } else if (status === 401) {
           errorMessage = "Authentication required - please log in again";
         } else if (status === 403) {
@@ -944,6 +991,7 @@ export default function AddTransactionModal({
         errorMessage = error.message || "Unknown error occurred";
       }
 
+      console.error("🎯 Final Error Message:", errorMessage);
       setError(errorMessage);
     } finally {
       setIsLoading(false);
